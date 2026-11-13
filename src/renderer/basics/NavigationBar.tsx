@@ -1,0 +1,369 @@
+import { actions } from "common/actions";
+import { Space } from "common/helpers/space";
+import { Dispatch } from "common/types";
+import {
+  ambientWind,
+  ambientWindState,
+  ambientTab,
+} from "common/util/navigation";
+import { ITCH_URL_RE, isItchioOrigin } from "common/constants/urls";
+import { transformUrl } from "renderer/util/url";
+import React from "react";
+import IconButton from "renderer/basics/IconButton";
+import { hook, hookWithProps } from "renderer/hocs/hook";
+import store from "renderer/store";
+import * as styles from "renderer/styles";
+import styled, { controlHeight, css } from "renderer/styles";
+import { Watcher } from "common/util/watcher";
+import { watchStore } from "renderer/hooks/useWatcher";
+import { withTab } from "renderer/hocs/withTab";
+import { _ } from "renderer/t";
+import {
+  dispatchTabEvolve,
+  dispatchTabReloaded,
+  dispatchTabStop,
+  dispatchOpenTabBackHistory,
+  dispatchTabGoBack,
+  dispatchOpenTabForwardHistory,
+  dispatchTabGoForward,
+} from "renderer/hocs/tab-utils";
+
+const HTTPS_RE = /^https:\/\//;
+const HTTP_RE = /^http:\/\//;
+const ITCH_RE = /^itch:\/\//;
+
+const NavigationBarDiv = styled.div`
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 4px;
+
+  flex-grow: 1;
+  flex-shrink: 1;
+  overflow: hidden;
+`;
+
+const addressBorderWidth = 1;
+
+const browserAddressStyle = css`
+  ${styles.singleLine};
+  height: 100%;
+  line-height: ${controlHeight - addressBorderWidth * 2}px;
+  border-radius: 2px;
+  font-size: 14px;
+  text-shadow: 0 0 1px black;
+  padding: 0;
+  padding-left: 8px;
+  padding-right: 12px;
+  width: 100%;
+  color: #fdfdfd;
+
+  border: ${addressBorderWidth}px solid transparent;
+  background: rgba(255, 255, 255, 0.1);
+  box-shadow: none;
+
+  &:focus {
+    outline: none;
+  }
+`;
+
+const AddressWrapper = styled.div`
+  height: ${controlHeight}px;
+  flex-grow: 1;
+  min-width: 0;
+`;
+
+const AddressInput = styled.input`
+  ${browserAddressStyle};
+
+  /* only rendered while editing, so the focused border is unconditional */
+  border-color: rgba(255, 255, 255, 0.4);
+  text-shadow: 0 0 1px transparent;
+  color: white;
+`;
+
+const AddressDiv = styled.div`
+  ${browserAddressStyle};
+
+  .security-theater-bit {
+    color: rgb(138, 175, 115);
+  }
+
+  .fluff-bit {
+    color: rgb(148, 184, 218);
+  }
+`;
+
+function isHTMLInput(el: HTMLElement): el is HTMLInputElement {
+  return el.tagName === "INPUT";
+}
+
+class NavigationBar extends React.PureComponent<Props, State> {
+  fresh = true;
+  browserAddress: HTMLInputElement | HTMLElement | null = null;
+  private unwatch = () => {};
+
+  // event handlers
+  goBack = () => {
+    dispatchTabGoBack(this.props);
+  };
+  showBackHistory = (ev: React.MouseEvent) => {
+    const { clientX, clientY } = ev;
+    ev.preventDefault();
+    dispatchOpenTabBackHistory(this.props, { clientX, clientY });
+  };
+  goForward = () => {
+    dispatchTabGoForward(this.props);
+  };
+  showForwardHistory = (ev: React.MouseEvent) => {
+    const { clientX, clientY } = ev;
+    ev.preventDefault();
+    dispatchOpenTabForwardHistory(this.props, { clientX, clientY });
+  };
+  stop = () => {
+    dispatchTabStop(this.props);
+  };
+  reload = () => {
+    dispatchTabReloaded(this.props);
+  };
+
+  constructor(props: Props, context: any) {
+    super(props, context);
+    this.state = {
+      editingAddress: false,
+      url: null,
+    };
+  }
+
+  override componentDidMount() {
+    this.unwatch = watchStore(store, (w) => this.subscribe(w));
+  }
+
+  override componentWillUnmount() {
+    this.unwatch();
+  }
+
+  subscribe(w: Watcher) {
+    w.on(actions.focusLocationBar, async (store, action) => {
+      const { wind, tab } = action.payload;
+      if (wind !== ambientWind()) {
+        return;
+      }
+      if (tab !== this.props.tab) {
+        return;
+      }
+      this.setState({
+        editingAddress: true,
+      });
+
+      const { browserAddress } = this;
+      if (browserAddress && isHTMLInput(browserAddress)) {
+        browserAddress.select();
+      }
+    });
+
+    w.on(actions.blurLocationBar, async (store, action) => {
+      this.setState({ editingAddress: false });
+    });
+  }
+
+  override render() {
+    const { canGoBack, canGoForward } = this.props;
+
+    return (
+      <NavigationBarDiv>
+        <IconButton
+          icon="arrow-left"
+          hint={_("browser.back")}
+          disabled={!canGoBack}
+          onClick={this.goBack}
+          onContextMenu={this.showBackHistory}
+        />
+        <IconButton
+          icon="arrow-right"
+          hint={_("browser.forward")}
+          disabled={!canGoForward}
+          onClick={this.goForward}
+          onContextMenu={this.showForwardHistory}
+        />
+        {this.renderAddressBar()}
+      </NavigationBarDiv>
+    );
+  }
+
+  renderAddressBar() {
+    const { loading, url } = this.props;
+
+    if (!this.props.showAddressBar) {
+      return null;
+    }
+
+    let { editingAddress } = this.state;
+
+    return (
+      <>
+        {loading ? (
+          <IconButton
+            icon="cross"
+            hint={_("browser.stop")}
+            onClick={this.stop}
+          />
+        ) : (
+          <IconButton
+            icon="repeat"
+            hint={_("browser.reload")}
+            onClick={this.reload}
+          />
+        )}
+        <AddressWrapper>
+          {editingAddress ? (
+            <AddressInput
+              className="browser-address"
+              type="search"
+              ref={this.onBrowserAddress as any}
+              defaultValue={url}
+              onKeyDown={this.addressKeyDown}
+              onBlur={this.addressBlur}
+            />
+          ) : (
+            <AddressDiv
+              className="browser-address"
+              ref={this.onBrowserAddress}
+              onClick={this.startEditingAddress}
+            >
+              {this.renderURL(url)}
+            </AddressDiv>
+          )}
+        </AddressWrapper>
+      </>
+    );
+  }
+
+  renderURL(url: string | undefined): JSX.Element | null {
+    if (!url) {
+      return null;
+    }
+
+    let isHTTP = HTTP_RE.test(url);
+    let isHTTPS = HTTPS_RE.test(url);
+    let isItch = ITCH_RE.test(url);
+
+    if (isHTTPS) {
+      return (
+        <span>
+          <span className="security-theater-bit">{"https://"}</span>
+          {url.replace(HTTPS_RE, "")}
+        </span>
+      );
+    }
+
+    if (isItch) {
+      return (
+        <span>
+          <span className="fluff-bit">{"itch://"}</span>
+          {url.replace(ITCH_RE, "")}
+        </span>
+      );
+    }
+
+    if (!(isHTTP || isHTTPS || isItch)) {
+      return null;
+    }
+
+    return <>{url}</>;
+  }
+
+  onBrowserAddress = (
+    browserAddress: HTMLElement | HTMLInputElement | null
+  ) => {
+    this.browserAddress = browserAddress;
+
+    if (!browserAddress) {
+      return;
+    }
+
+    const { internalPage } = this.props;
+    if (this.fresh && internalPage === "new-tab") {
+      this.fresh = false;
+      this.startEditingAddress();
+    }
+
+    if (isHTMLInput(browserAddress)) {
+      browserAddress.focus();
+      browserAddress.select();
+    }
+  };
+
+  addressKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === "Enter") {
+      const input = e.currentTarget.value;
+      const url = transformUrl(input);
+
+      // If the supplied url is external to itch, then
+      // open in a new external browser window
+      if (isItchioOrigin(url) || ITCH_URL_RE.test(url)) {
+        dispatchTabEvolve(this.props, { url, replace: false });
+      } else {
+        store.dispatch(actions.openInExternalBrowser({ url: url }));
+      }
+      this.setState({ editingAddress: false });
+    } else if (e.key === "Escape") {
+      e.preventDefault();
+      this.setState({ editingAddress: false });
+    }
+  };
+
+  addressBlur = () => {
+    const { browserAddress } = this;
+    if (browserAddress && isHTMLInput(browserAddress)) {
+      browserAddress.setSelectionRange(0, 0);
+    }
+  };
+
+  startEditingAddress = () => {
+    this.setState({ editingAddress: true });
+  };
+
+  static getDerivedStateFromProps(
+    props: Readonly<Props>,
+    state: State
+  ): Partial<State> | null {
+    if (props.url !== state.url) {
+      return {
+        url: props.url,
+        editingAddress: false,
+      };
+    }
+    return null;
+  }
+}
+
+interface Props {
+  tab: string;
+  dispatch: Dispatch;
+  loading: boolean;
+  showAddressBar?: boolean;
+
+  url: string | undefined;
+  internalPage: string | undefined;
+  canGoBack: boolean | undefined;
+  canGoForward: boolean | undefined;
+}
+
+interface State {
+  url: string | null | undefined;
+  editingAddress: boolean;
+}
+
+export default withTab(
+  hookWithProps(NavigationBar)((map) => ({
+    url: map((rs, props) => ambientTab(rs, props).location?.url),
+    internalPage: map(
+      (rs, props) => ambientTab(rs, props).location?.internalPage
+    ),
+    canGoBack: map((rs, props) => ambientTab(rs, props).status?.canGoBack),
+    canGoForward: map(
+      (rs, props) => ambientTab(rs, props).status?.canGoForward
+    ),
+  }))(NavigationBar)
+);

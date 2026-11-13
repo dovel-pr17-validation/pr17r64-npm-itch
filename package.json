@@ -1,0 +1,112 @@
+{
+  "name": "kitch",
+  "productName": "kitch",
+  "desktopName": "kitch",
+  "version": "26.22.0",
+  "description": "itch.io desktop client",
+  "keywords": [
+    "itch.io",
+    "games"
+  ],
+  "repository": "https://github.com/itchio/itch",
+  "bugs": "https://github.com/itchio/itch/issues",
+  "author": "itch.io team <support@itch.io>",
+  "contributors": [
+    {
+      "name": "Amos Wenger",
+      "email": "amos@itch.io"
+    },
+    {
+      "name": "Leaf Corcoran",
+      "email": "leafo@itch.io"
+    }
+  ],
+  "main": "dist/main/main.bundle.cjs",
+  "license": "MIT",
+  "type": "module",
+  "dependencies": {
+    "@itchio/butlerd": "^15.0.0",
+    "buffer": "^6.0.3",
+    "classnames": "^2.5.1",
+    "fast-memoize": "^2.5.2",
+    "intl-messageformat": "^9.4.6",
+    "logrotate-stream": "^0.2.7",
+    "lru-cache": "^11.3.6",
+    "mime-types": "^3.0.2",
+    "polished": "^3.6.7",
+    "process": "^0.11.10",
+    "progress-stream": "^2.0.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-fast-compare": "^3.2.2",
+    "react-hint": "^3.2.0",
+    "react-intl": "^10.1.22",
+    "react-redux": "^8.1.3",
+    "react-tabs": "^4.3.0",
+    "redux": "^4.0.5",
+    "redux-cli-logger": "^2.1.0",
+    "redux-logger": "^3.0.6",
+    "reselect": "^4.0.0",
+    "semver": "^7.3.4",
+    "split2": "^4.2.0",
+    "styled-components": "^5.3.11",
+    "systeminformation": "^5.31.13",
+    "term-color": "^1.0.1",
+    "vivus": "^0.4.5",
+    "which": "^6.0.1",
+    "yauzl": "^3.4.0"
+  },
+  "devDependencies": {
+    "@electron/fuses": "^2.1.3",
+    "@electron/notarize": "^3.1.1",
+    "@electron/osx-sign": "^2.5.0",
+    "@electron/packager": "^20.0.2",
+    "@itchio/bob": "^2.1.0",
+    "@types/debug": "^4.1.13",
+    "@types/mime-types": "^3.0.1",
+    "@types/node": "^24.0.0",
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
+    "@types/semver": "^7.3.4",
+    "@types/split2": "^4.2.3",
+    "@types/styled-components": "^5.1.36",
+    "@types/vivus": "^0.4.3",
+    "@types/which": "^3.0.4",
+    "@types/yauzl": "^3.4.0",
+    "cross-env": "^10.1.0",
+    "debug": "^4.4.3",
+    "electron": "^44.5.1",
+    "esbuild": "^0.28.1",
+    "husky": "^9.1.7",
+    "lint-staged": "^16.4.0",
+    "prettier": "^2.8.8",
+    "typescript": "^6.0.3"
+  },
+  "scripts": {
+    "sync-butler": "cd ../butler && go run ./butlerd/generous ts ../itch/src/common/butlerd/messages.ts && cd ../itch && prettier --write src/common/butlerd/messages.ts",
+    "sync-i18n": "node release/sync-i18n-strings.js",
+    "start": "node develop.mjs",
+    "codex": "codex -c 'mcp_servers.chrome-devtools.command=\"npx\"' -c 'mcp_servers.chrome-devtools.args=[\"chrome-devtools-mcp@latest\",\"--browser-url=http://127.0.0.1:9223\"]'",
+    "compile": "cross-env NODE_ENV=production node build.mjs",
+    "clean": "rm -rf artifacts dist prefix build .chromedriver *.log.txt",
+    "test": "node unit-tests.mjs",
+    "integration-tests": "node release/test.js --detect-osarch",
+    "ts-check": "npm run ts-check:app && npm run ts-check:release",
+    "ts-check:app": "tsc -b",
+    "ts-check:release": "tsc -p release",
+    "ts-watch": "tsc -b --watch",
+    "ts-watch:main": "tsc -p tsconfig.main.json --watch",
+    "ts-watch:preload": "tsc -p tsconfig.preload.json --watch",
+    "ts-watch:renderer": "tsc -p tsconfig.renderer.json --watch",
+    "release": "node release/push-tag.js",
+    "prepare": "husky"
+  },
+  "lint-staged": {
+    "*.{ts,tsx}": [
+      "prettier --write"
+    ]
+  },
+  "allowScripts": {
+    "esbuild@0.28.2": true
+  }
+}

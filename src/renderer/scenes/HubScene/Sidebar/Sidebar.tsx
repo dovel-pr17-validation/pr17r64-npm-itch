@@ -1,0 +1,262 @@
+import classNames from "classnames";
+import { arrayMove } from "common/util/array-move";
+import { selectHasInFlightPush } from "common/reducers/upload";
+import {
+  ambientNavigation,
+  ambientWind,
+  ambientWindState,
+} from "common/util/navigation";
+import React from "react";
+import Filler from "renderer/basics/Filler";
+import Floater from "renderer/basics/Floater";
+import Icon from "renderer/basics/Icon";
+import IconButton from "renderer/basics/IconButton";
+import { hook } from "renderer/hocs/hook";
+import Logo from "renderer/scenes/HubScene/Sidebar/Logo";
+import Search from "renderer/scenes/HubScene/Sidebar/Search";
+import {
+  SidebarHeading,
+  SidebarSection,
+} from "renderer/scenes/HubScene/Sidebar/styles";
+import SortableTabList from "renderer/scenes/HubScene/Sidebar/SortableTabList";
+import styled, * as styles from "renderer/styles";
+import { T, _ } from "renderer/t";
+import { actions } from "common/actions";
+import { Dispatch, LocalizedString } from "common/types";
+import { titleBarHeight } from "common/constants/windows";
+import equal from "react-fast-compare";
+import PrimeDownload from "renderer/scenes/HubScene/Sidebar/PrimeDownload";
+
+const SidebarDiv = styled.div`
+  width: 240px;
+  background: ${(props) => props.theme.sidebarBackground};
+  font-size: ${styles.fontSizes.sidebar};
+
+  animation: ${styles.animations.enterLeft} 0.2s;
+
+  padding-bottom: 8px;
+
+  height: 100%;
+  flex-grow: 0;
+  flex-shrink: 0;
+
+  display: flex;
+  align-items: stretch;
+  flex-direction: column;
+`;
+
+/*
+ * When the system button layout puts native window controls on the left
+ * (titlebar-area-x > 0), they float over the sidebar's top corner; reserve
+ * a strip so they don't cover the logo. The * 9999 collapses the height to
+ * either 0 or the full titleBarHeight, since CSS has no conditionals.
+ */
+const WindowControlsSpacer = styled.div`
+  flex-shrink: 0;
+  -webkit-app-region: drag;
+  height: min(calc(env(titlebar-area-x, 0px) * 9999), ${titleBarHeight}px);
+`;
+
+const SidebarItems = styled.div`
+  display: flex;
+  align-items: stretch;
+  flex-direction: column;
+
+  overflow: hidden;
+
+  &.no-shrink {
+    flex-shrink: 0;
+  }
+`;
+
+class Sidebar extends React.PureComponent<Props, State> {
+  constructor(props: Sidebar["props"], context: any) {
+    super(props, context);
+    this.state = {
+      openTabs: props.openTabs,
+    };
+  }
+
+  closeAllTabs = () => {
+    const { dispatch } = this.props;
+    dispatch(
+      actions.closeAllTabs({
+        wind: ambientWind(),
+      })
+    );
+  };
+
+  newTab = () => {
+    const { dispatch } = this.props;
+    dispatch(
+      actions.newTab({
+        wind: ambientWind(),
+      })
+    );
+  };
+
+  onSortEnd = (oldIndex: number, newIndex: number) => {
+    this.setState({
+      openTabs: arrayMove(this.state.openTabs, oldIndex, newIndex),
+    });
+    const { dispatch } = this.props;
+    dispatch(
+      actions.moveTab({
+        wind: ambientWind(),
+        before: oldIndex,
+        after: newIndex,
+      })
+    );
+  };
+
+  override render() {
+    const { enableTabs } = this.props;
+
+    return (
+      <SidebarDiv id="sidebar" role="navigation">
+        <WindowControlsSpacer />
+        <Logo />
+
+        <Search />
+
+        {enableTabs ? this.renderTabs() : this.renderShortcuts()}
+        {this.renderShortcutsRest()}
+      </SidebarDiv>
+    );
+  }
+
+  renderTabs(): JSX.Element {
+    return (
+      <>
+        <SidebarItems>
+          <SidebarSection>
+            <SidebarHeading>{T(["sidebar.category.tabs"])}</SidebarHeading>
+            <Filler />
+            <IconButton
+              icon="delete"
+              id="sidebar-close-all-tabs"
+              hint={_("sidebar.close_all_tabs")}
+              hintPosition="left"
+              onClick={this.closeAllTabs}
+            />
+            <IconButton
+              id="new-tab-icon"
+              icon="plus"
+              hint={_("sidebar.new_tab")}
+              hintPosition="left"
+              onClick={this.newTab}
+            />
+          </SidebarSection>
+
+          <SortableTabList
+            items={this.state.openTabs}
+            currentTab={this.props.tab}
+            onSortEnd={this.onSortEnd}
+          />
+        </SidebarItems>
+      </>
+    );
+  }
+
+  renderShortcuts(): JSX.Element {
+    return (
+      <>
+        <SidebarItems>
+          {this.renderLink("itch://featured", "earth", ["sidebar.explore"])}
+          {this.renderLink("itch://library", "heart-filled", [
+            "sidebar.library",
+          ])}
+          {this.renderLink("itch://collections", "video_collection", [
+            "sidebar.collections",
+          ])}
+          {this.renderLink("itch://dashboard", "archive", [
+            "sidebar.dashboard",
+          ])}
+          {this.renderLink(
+            "itch://upload",
+            "upload",
+            ["sidebar.upload"],
+            this.props.uploadActive ? <Floater tiny /> : null
+          )}
+        </SidebarItems>
+      </>
+    );
+  }
+
+  renderShortcutsRest(): JSX.Element {
+    return (
+      <>
+        <div style={{ flexGrow: 1 }} />
+        <PrimeDownload />
+        <SidebarItems className="no-shrink">
+          {this.renderLink("itch://downloads", "download", [
+            "sidebar.downloads",
+          ])}
+          {this.renderLink("itch://preferences", "cog", [
+            "sidebar.preferences",
+          ])}
+        </SidebarItems>
+      </>
+    );
+  }
+
+  renderLink(
+    url: string,
+    icon: string,
+    label: LocalizedString,
+    indicator?: JSX.Element | null
+  ): JSX.Element {
+    return (
+      <SidebarSection>
+        <a
+          href={url}
+          className={classNames({ active: this.props.url.startsWith(url) })}
+        >
+          <Icon icon={icon} /> {T(label)}
+          {indicator ? (
+            <span style={{ marginLeft: "auto" }}>{indicator}</span>
+          ) : null}
+        </a>
+      </SidebarSection>
+    );
+  }
+
+  static getDerivedStateFromProps(
+    props: Props,
+    state: State
+  ): Partial<State> | null {
+    if (!equal(props.openTabs, state.openTabs)) {
+      return {
+        openTabs: props.openTabs,
+      };
+    }
+
+    return null;
+  }
+}
+
+interface Props {
+  tab: string;
+  openTabs: string[];
+  enableTabs: boolean;
+  url: string;
+  uploadActive: boolean;
+
+  dispatch: Dispatch;
+}
+
+interface State {
+  openTabs: string[];
+}
+
+export default hook((map) => ({
+  tab: map((rs) => ambientNavigation(rs).tab),
+  openTabs: map((rs) => ambientNavigation(rs).openTabs),
+  enableTabs: map((rs) => rs.preferences.enableTabs),
+  url: map((rs) => {
+    const ws = ambientWindState(rs);
+    const ti = ws.tabInstances[ambientNavigation(rs).tab];
+    return ti.history[ti.currentIndex].url;
+  }),
+  uploadActive: map((rs) => selectHasInFlightPush(rs.upload)),
+}))(Sidebar);

@@ -1,0 +1,45 @@
+import { mainWorldSupplement } from "main/inject/inject-preload";
+
+const supplement = window as unknown as typeof mainWorldSupplement;
+
+export const url = {
+  parse: supplement.nodeUrl.parse,
+  format: supplement.nodeUrl.format,
+};
+
+export const querystring = {
+  stringify: supplement.querystring.stringify,
+  parse: supplement.querystring.parse,
+};
+
+export const github = {
+  fetchReleases: supplement.github.fetchReleases,
+};
+
+export const electron = supplement.electron;
+
+export const useragent = {
+  userAgent: supplement.useragent.userAgent,
+};
+
+export const resources = {
+  getImageURL: supplement.resources.getImageURL,
+};
+
+export const paths = {
+  legacyMarketPath: supplement.paths.legacyMarketPath,
+  mainLogPath: supplement.paths.mainLogPath,
+};
+
+export const files = {
+  readTextFile: supplement.files.readTextFile,
+};
+
+export const sysinfo = {
+  report: supplement.sysinfo.report,
+};
+
+export const butlerd = {
+  rcall: supplement.butlerd.rcall2,
+  createRequest: supplement.butlerd.createRequest,
+};

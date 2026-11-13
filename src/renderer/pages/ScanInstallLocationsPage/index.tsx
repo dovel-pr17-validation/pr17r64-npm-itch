@@ -1,0 +1,379 @@
+import { getErrorStack } from "common/butlerd/errors";
+import { actions } from "common/actions";
+import * as messages from "common/butlerd/messages";
+import { Game } from "common/butlerd/messages";
+import { Dispatch } from "common/types";
+import { ambientWind } from "common/util/navigation";
+import { paths } from "renderer/bridge";
+import React from "react";
+import Button from "renderer/basics/Button";
+import Filler from "renderer/basics/Filler";
+import Link from "renderer/basics/Link";
+import LoadingCircle from "renderer/basics/LoadingCircle";
+import { ModalButtons } from "renderer/basics/modal-styles";
+import { rcall } from "renderer/butlerd/rcall";
+import { doAsync } from "renderer/helpers/doAsync";
+import { hook } from "renderer/hocs/hook";
+import { dispatchTabPageUpdate } from "renderer/hocs/tab-utils";
+import { withTab } from "renderer/hocs/withTab";
+import { rendererLogger } from "renderer/logger";
+import Log from "renderer/pages/AppLogPage/Log";
+import Page from "renderer/pages/common/Page";
+import { FilterSpacer } from "renderer/pages/common/SortsAndFilters";
+import StandardGameCover, {
+  standardCoverHeight,
+  standardCoverWidth,
+} from "renderer/pages/common/StandardGameCover";
+import StandardGameDesc from "renderer/pages/common/StandardGameDesc";
+import { Box, BoxInner } from "renderer/pages/PageStyles/boxes";
+import { MeatProps } from "renderer/scenes/HubScene/Meats/types";
+import styled from "renderer/styles";
+import { T, _ } from "renderer/t";
+import { recordingLogger } from "common/logger";
+import { hookLogging, onNotification, onRequest } from "common/helpers/bridge";
+
+enum Stage {
+  Scanning,
+  NeedConfirm,
+  Done,
+}
+
+const coverHeight = 20;
+const coverWidth = (coverHeight / standardCoverHeight) * standardCoverWidth;
+
+/*
+ * Log sizes itself with a height: 100% chain, which only works under an
+ * ancestor with a definite height; here it must instead fill whatever
+ * space is left above the button row, so the container, the table and
+ * the scrolling tbody are all turned into min-height: 0 flex items.
+ */
+const StyledLog = styled(Log)`
+  flex-grow: 1;
+  min-height: 0;
+  height: auto;
+  display: flex;
+  flex-direction: column;
+  padding-bottom: 1em;
+
+  table {
+    flex-grow: 1;
+    min-height: 0;
+    height: auto;
+    display: flex;
+    flex-direction: column;
+  }
+
+  tbody {
+    flex-grow: 1;
+    min-height: 0;
+    height: auto;
+  }
+`;
+
+const TinyCover = styled(StandardGameCover)`
+  width: ${coverWidth}px;
+  height: ${coverHeight}px;
+  overflow: hidden;
+
+  margin-right: 8px;
+`;
+
+const PageScan = styled(Page)`
+  user-select: none;
+  height: 100%;
+  padding: 20px;
+`;
+
+const WideBox = styled(Box)`
+  width: 100%;
+`;
+
+const ListDiv = styled.div`
+  flex-grow: 1000; /* Filler is 100 */
+  flex-shrink: 0;
+`;
+
+const DoneDiv = styled.div`
+  flex-grow: 1000; /* Filler is 100 */
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+`;
+
+const ListDivSpacer = styled.div`
+  flex-shrink: 0;
+  height: 24px;
+`;
+
+const List = styled.ul`
+  overflow-y: auto;
+  max-height: 300px;
+  min-width: 120px;
+  margin-top: 1em;
+  flex-grow: 1;
+
+  li {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    margin: 6px 0;
+  }
+`;
+
+const SectionDiv = styled.div`
+  padding: 8px;
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: center;
+`;
+
+const parentLogger = rendererLogger.child("ScanInstallLocationsPage");
+
+class ScanInstallLocations extends React.PureComponent<Props, State> {
+  /** set once the confirm-import prompt is shown */
+  resolve: ((val?: any) => void) | null = null;
+  reject: ((e: Error) => void) | null = null;
+
+  constructor(props: Props, context: any) {
+    super(props, context);
+    this.state = {
+      stage: Stage.Scanning,
+      progress: 0,
+      game: undefined,
+      games: [],
+      numItems: 0,
+      didImport: false,
+      log: "",
+      showLog: false,
+    };
+  }
+
+  override componentDidMount() {
+    dispatchTabPageUpdate(this.props, {
+      label: ["preferences.scan_install_locations"],
+    });
+
+    doAsync(async () => {
+      let didImport = false;
+      const logger = recordingLogger(rendererLogger);
+      try {
+        // investigate
+        const { numImportedItems } = await rcall(
+          messages.InstallLocationsScan,
+          { legacyMarketPath: paths.legacyMarketPath() },
+          [
+            hookLogging(logger),
+            onNotification(messages.Progress.__method, async ({ progress }) => {
+              this.setState({ progress });
+            }),
+            onNotification(
+              messages.InstallLocationsScanYield.__method,
+              async ({ game }) => {
+                this.setState((state) => ({
+                  game,
+                  games: [...state.games, game],
+                }));
+              }
+            ),
+            onRequest(
+              messages.InstallLocationsScanConfirmImport.__method,
+              async ({ numItems }) => {
+                this.setState({ stage: Stage.NeedConfirm, numItems });
+                let confirmPromise = new Promise((resolve, reject) => {
+                  this.resolve = resolve;
+                  this.reject = reject;
+                });
+                try {
+                  await confirmPromise;
+                  didImport = true;
+                  this.setState({ didImport: true });
+                  return { confirm: true };
+                } catch (e) {
+                  logger.warn(`While importing games: ${getErrorStack(e)}`);
+                }
+                return { confirm: false };
+              }
+            ),
+          ]
+        );
+        this.setState({ numItems: numImportedItems });
+      } finally {
+        this.setState({ stage: Stage.Done, log: logger.getLog() });
+        const { dispatch } = this.props;
+        dispatch(actions.newItemsImported({}));
+        if (didImport) {
+          this.onClose();
+        }
+      }
+    });
+  }
+
+  override render() {
+    const { progress, game } = this.state;
+    return (
+      <PageScan>
+        <Filler />
+        {this.renderStatus()}
+        <Filler />
+        {this.renderButtons()}
+      </PageScan>
+    );
+  }
+
+  renderButtons() {
+    return (
+      <ModalButtons>
+        <Button label={T(_("prompt.action.cancel"))} onClick={this.onClose} />
+        <Filler />
+        {this.renderMainButton()}
+      </ModalButtons>
+    );
+  }
+
+  renderMainButton() {
+    const { stage } = this.state;
+    switch (stage) {
+      case Stage.Scanning:
+        return <Button label={T(_("prompt.action.continue"))} disabled />;
+      case Stage.NeedConfirm:
+        const { numItems } = this.state;
+        return (
+          <Button
+            icon="plus"
+            label={T(
+              _("preferences.scan_install_locations.import_items", { numItems })
+            )}
+            onClick={this.onConfirm}
+          />
+        );
+      case Stage.Done:
+        return (
+          <Button label={T(_("prompt.action.close"))} onClick={this.onClose} />
+        );
+    }
+    return null;
+  }
+
+  renderStatus() {
+    const { stage } = this.state;
+    switch (stage) {
+      case Stage.Scanning:
+        return this.renderScanning();
+      case Stage.NeedConfirm:
+        return this.renderNeedConfirm();
+      case Stage.Done:
+        return this.renderDone();
+    }
+  }
+
+  renderScanning() {
+    const { progress, game } = this.state;
+    return (
+      <>
+        <SectionDiv>
+          <WideBox>
+            <BoxInner>
+              <StandardGameCover game={game} />
+              <FilterSpacer />
+              <StandardGameDesc game={game} />
+              <FilterSpacer />
+            </BoxInner>
+          </WideBox>
+        </SectionDiv>
+        <Filler />
+        <SectionDiv>
+          <LoadingCircle wide progress={progress} />
+          <FilterSpacer />
+          {T(_("preferences.scan_install_locations.looking_for_games"))}
+        </SectionDiv>
+      </>
+    );
+  }
+
+  renderNeedConfirm() {
+    const { games } = this.state;
+    return (
+      <ListDiv>
+        <p>{T(_("preferences.scan_install_locations.message"))}</p>
+        <List>
+          {games.map((g) => (
+            <li key={g.id}>
+              <TinyCover game={g} showGifMarker={false} />
+              <span>{g.title}</span>
+            </li>
+          ))}
+        </List>
+        <Filler />
+      </ListDiv>
+    );
+  }
+
+  onConfirm = () => {
+    if (this.resolve) {
+      this.resolve();
+    }
+  };
+
+  onClose = () => {
+    const { dispatch } = this.props;
+    dispatch(actions.closeWind({ wind: ambientWind() }));
+  };
+
+  renderDone() {
+    const { didImport, numItems, showLog, log } = this.state;
+    return (
+      <DoneDiv>
+        {didImport ? (
+          <p>
+            {T(
+              _("preferences.scan_install_locations.items_imported", {
+                numImportedItems: numItems,
+              })
+            )}
+          </p>
+        ) : (
+          <p>{T(_("preferences.scan_install_locations.no_items_found"))}</p>
+        )}
+        <ListDivSpacer />
+        {showLog ? (
+          <StyledLog log={log} />
+        ) : (
+          <Link
+            label={T(_("grid.item.view_details"))}
+            onClick={this.onShowLog}
+          />
+        )}
+      </DoneDiv>
+    );
+  }
+
+  onShowLog = () => {
+    this.setState({ showLog: true });
+  };
+
+  override componentWillUnmount() {
+    if (this.reject) {
+      this.reject(new Error("closed!"));
+    }
+  }
+}
+
+interface Props extends MeatProps {
+  dispatch: Dispatch;
+  tab: string;
+}
+
+interface State {
+  stage: Stage;
+  progress: number;
+  /** undefined until the scan yields its first game */
+  game: Game | undefined;
+  games: Game[];
+  numItems: number;
+  didImport: boolean;
+  log: string;
+  showLog: boolean;
+}
+
+export default withTab(hook()(ScanInstallLocations));

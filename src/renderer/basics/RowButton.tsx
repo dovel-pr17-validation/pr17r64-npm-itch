@@ -1,0 +1,145 @@
+import classNames from "classnames";
+import { lighten } from "polished";
+import React from "react";
+import styled, * as styles from "renderer/styles";
+import Icon from "renderer/basics/Icon";
+
+const LargeIcon = styled(Icon)`
+  font-size: 20px;
+`;
+
+const Label = styled.div`
+  ${styles.singleLine};
+`;
+
+const RowButtonStyled = styled.button`
+  ${styles.resetButton};
+  text-align: left;
+
+  ${styles.singleLine};
+
+  font-size: ${(props) => props.theme.fontSizes.baseText};
+  font-weight: bold;
+  padding: 8px 16px;
+
+  margin: 8px 0;
+
+  border: 1px solid;
+  ${styles.squircle("16px")};
+  box-shadow: 0 1px 3px ${(props) => props.theme.inputBoxShadow};
+
+  color: ${(props) => props.theme.baseText};
+
+  font-size: ${(props) => props.theme.fontSizes.large};
+
+  &:hover {
+    background: ${(props) => lighten(0.12, props.theme.breadBackground)};
+    border-color: ${(props) => lighten(0.1, props.theme.inputBorder)};
+    color: ${(props) => props.theme.secondaryTextHover};
+
+    cursor: pointer;
+  }
+
+  color: ${(props) => lighten(0.1, props.theme.baseText)};
+  background: ${(props) => lighten(0.1, props.theme.breadBackground)};
+  border-color: ${(props) => props.theme.inputBorder};
+
+  &:active {
+    transform: translateY(1px);
+  }
+
+  box-shadow: none;
+
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+
+  min-width: 450px;
+`;
+
+const Spacer = styled.div`
+  min-width: 8px;
+  flex-shrink: 0;
+
+  &.large {
+    min-width: 16px;
+  }
+`;
+
+interface Props {
+  className?: string;
+  onClick?: React.MouseEventHandler<HTMLButtonElement>;
+  hint?: string;
+  icon?: string;
+  iconComponent?: JSX.Element;
+  label?: JSX.Element | string;
+  id?: string;
+  children?: React.ReactNode;
+}
+
+const RowButton = ({
+  className,
+  icon,
+  iconComponent: iconComponentProp,
+  label,
+  hint,
+  onClick,
+  children,
+  ...restProps
+}: Props) => {
+  const iconComponent =
+    iconComponentProp ?? (icon ? <LargeIcon icon={icon} /> : null);
+
+  return (
+    <RowButtonStyled
+      type="button"
+      onClick={onClick}
+      data-rh={hint ? JSON.stringify(hint) : null}
+      data-rh-at="top"
+      className={classNames(className)}
+      {...restProps}
+    >
+      {iconComponent ? (
+        <>
+          {iconComponent}
+          <Spacer className="large" />
+        </>
+      ) : null}
+      {iconComponent && label ? " " : null}
+      {label ? <Label>{label}</Label> : null}
+      {children}
+    </RowButtonStyled>
+  );
+};
+
+export default React.memo(RowButton);
+
+const TagDiv = styled.div`
+  color: ${(props) => props.theme.secondaryText};
+  text-shadow: none;
+
+  font-size: 80%;
+
+  border-radius: ${(props) => props.theme.borderRadii.explanation};
+`;
+
+export const BigButtonContent = styled.div`
+  flex: 1 1;
+  display: flex;
+  flex-direction: column;
+`;
+
+export const BigButtonRow = styled.div`
+  display: flex;
+  flex-direction: row;
+  gap: 8px;
+  margin: 0.3em 0.1em;
+`;
+
+interface TagProps {
+  children?: React.ReactNode;
+}
+
+export const Tag = React.memo(({ children }: TagProps) => {
+  return <TagDiv>{children}</TagDiv>;
+});

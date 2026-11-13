@@ -1,0 +1,184 @@
+import { actions } from "common/actions";
+import * as messages from "common/butlerd/messages";
+import { Game } from "common/butlerd/messages";
+import getGameStatus, {
+  GameStatus,
+  withOwnedAccess,
+} from "common/helpers/get-game-status";
+import { ambientWind } from "common/util/navigation";
+import React from "react";
+import { Dispatch } from "redux";
+import Filler from "renderer/basics/Filler";
+import GameStats from "renderer/basics/GameStats";
+import IconButton from "renderer/basics/IconButton";
+import PlaylistAddIcon from "renderer/basics/icons/PlaylistAddIcon";
+import MainAction from "renderer/basics/MainAction";
+import butlerCaller from "renderer/hocs/butlerCaller";
+import { hookWithProps } from "renderer/hocs/hook";
+import { browserContextHeight } from "renderer/pages/BrowserPage/BrowserContext/BrowserContextConstants";
+import StandardGameCover, {
+  standardCoverHeight,
+  standardCoverWidth,
+} from "renderer/pages/common/StandardGameCover";
+import styled from "renderer/styles";
+import { _ } from "renderer/t";
+
+const FetchGameOwnership = butlerCaller(messages.FetchGameOwnership);
+
+const Spacer = styled.div`
+  flex-basis: 16px;
+  flex-shrink: 0;
+`;
+
+// round icon buttons have less visual mass than the main action, so they
+// sit closer to each other than to it
+const IconSpacer = styled.div`
+  flex-basis: 8px;
+  flex-shrink: 0;
+`;
+
+const coverFactor = browserContextHeight / standardCoverHeight;
+
+const SmallerGameCover = styled(StandardGameCover)`
+  flex-shrink: 0;
+
+  width: ${standardCoverWidth * coverFactor}px;
+  height: ${standardCoverHeight * coverFactor}px;
+`;
+
+const BrowserContextDiv = styled.div`
+  background: ${(props) => props.theme.sidebarBackground};
+
+  display: flex;
+  justify-content: center;
+  flex-direction: row;
+
+  padding-right: 16px;
+  box-shadow: 0 0 18px rgba(0, 0, 0, 0.16);
+  z-index: 50;
+  align-items: center;
+`;
+
+class BrowserContextGame extends React.PureComponent<Props> {
+  // last ownership answer, captured at render time so the context menu
+  // (opened later by user gesture) can carry the hint
+  private owned = false;
+
+  override render() {
+    const { game, profileId } = this.props;
+
+    if (!profileId) {
+      return this.renderContext(this.props.status);
+    }
+
+    // ownership can come from an owned bundle without a materialized
+    // download key, which commons (and thus getGameStatus) knows nothing
+    // about — layer Fetch.GameOwnership on top
+    return (
+      <FetchGameOwnership
+        params={{ profileId, gameId: game.id }}
+        loadingHandled
+        errorsHandled
+        render={this.renderWithOwnership}
+      />
+    );
+  }
+
+  renderWithOwnership = FetchGameOwnership.renderCallback(({ result }) => {
+    const { status } = this.props;
+    this.owned = !!(result && result.owned);
+    return this.renderContext(this.owned ? withOwnedAccess(status) : status);
+  });
+
+  renderContext(status: GameStatus) {
+    const { game } = this.props;
+
+    return (
+      <BrowserContextDiv
+        onContextMenu={this.onContextMenu}
+        role="region"
+        aria-label="Game"
+      >
+        <SmallerGameCover
+          game={game}
+          showInfo={false}
+          forceOwned={this.owned}
+        />
+        <Spacer />
+        <GameStats game={game} status={status} />
+        <Filler />
+        <MainAction game={game} status={status} wide />
+        <Spacer />
+        <IconButton
+          className="game-collections"
+          huge
+          emphasized
+          icon={<PlaylistAddIcon />}
+          hint={_("collection.dialog.hint")}
+          onClick={this.onCollections}
+        />
+        <IconSpacer />
+        <IconButton
+          className="manage-game"
+          huge
+          emphasized
+          icon="cog"
+          hint={_("game.manage")}
+          onClick={this.onManage}
+        />
+      </BrowserContextDiv>
+    );
+  }
+
+  override componentDidMount() {
+    const { status, dispatch } = this.props;
+    if (!status.operation && !status.update && status.cave) {
+      // this logic is inferred from the onClick handler
+      // defined in MainAction
+      dispatch(
+        actions.checkForGameUpdate({
+          caveId: status.cave.id,
+          suppressNotification: true,
+        })
+      );
+    }
+  }
+
+  onContextMenu = (ev: React.MouseEvent<any>) => {
+    ev.preventDefault();
+    const { clientX, clientY } = ev;
+    const { game, dispatch } = this.props;
+    dispatch(
+      actions.openGameContextMenu({
+        wind: ambientWind(),
+        game,
+        forceOwned: this.owned,
+        clientX,
+        clientY,
+      })
+    );
+  };
+
+  onManage = () => {
+    const { game, dispatch } = this.props;
+    dispatch(actions.manageGame({ game }));
+  };
+
+  onCollections = () => {
+    const { game, dispatch } = this.props;
+    dispatch(actions.openGameCollectionsDialog({ gameId: game.id }));
+  };
+}
+
+interface Props {
+  game: Game;
+  dispatch: Dispatch<any>;
+
+  status: GameStatus;
+  profileId: number | null;
+}
+
+export default hookWithProps(BrowserContextGame)((map) => ({
+  status: map((rs, props) => getGameStatus(rs, props.game)),
+  profileId: map((rs) => (rs.profile.profile ? rs.profile.profile.id : null)),
+}))(BrowserContextGame);

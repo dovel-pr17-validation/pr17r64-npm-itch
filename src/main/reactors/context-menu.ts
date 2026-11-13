@@ -1,0 +1,96 @@
+import { actions } from "common/actions";
+import { t } from "common/format/t";
+import {
+  MenuItem,
+  MenuTemplate,
+  OpenContextMenuBase,
+  Store,
+} from "common/types";
+import { Watcher } from "common/util/watcher";
+import { Menu, MenuItemConstructorOptions } from "electron";
+import {
+  adoptInstallMenu,
+  gameControls,
+  userMenu,
+} from "main/reactors/context-menu/build-template";
+import { getNativeWindow } from "main/reactors/winds";
+
+function openMenu(
+  store: Store,
+  template: MenuTemplate,
+  base: OpenContextMenuBase
+) {
+  if (template.length === 0) {
+    // don't show empty context menus
+    return;
+  }
+  store.dispatch(actions.popupContextMenu({ template, ...base }));
+}
+
+export default function (watcher: Watcher) {
+  watcher.on(actions.openGameContextMenu, async (store, action) => {
+    const { game, forceOwned, showAdoptInstall, showUploadBuild } =
+      action.payload;
+    const template = showAdoptInstall
+      ? adoptInstallMenu(game)
+      : gameControls(store, game, forceOwned, showUploadBuild);
+
+    const { wind, clientX, clientY } = action.payload;
+    openMenu(store, template, { wind, clientX, clientY });
+  });
+
+  watcher.on(actions.openUserMenu, async (store, action) => {
+    const template = userMenu(store);
+    const { wind, clientX, clientY } = action.payload;
+    openMenu(store, template, { wind, clientX, clientY });
+  });
+
+  watcher.on(actions.popupContextMenu, async (store, action) => {
+    const rs = store.getState();
+    const { wind, template, clientX, clientY } = action.payload;
+    const nw = getNativeWindow(rs, wind);
+
+    // menu.popup expects window-content coordinates, but the renderer reports
+    // clientX/clientY in zoom-scaled CSS pixels. Multiply by the zoom factor
+    // so the menu lands at the click point when the user has zoomed in/out.
+    const zoom = nw?.webContents?.getZoomFactor?.() ?? 1;
+    const menu = Menu.buildFromTemplate(convertTemplate(store, template));
+    menu.popup({
+      window: nw ?? undefined,
+      x: Math.round(clientX * zoom),
+      y: Math.round(clientY * zoom),
+    });
+  });
+}
+
+function convertTemplate(
+  store: Store,
+  template: MenuItem[]
+): MenuItemConstructorOptions[] {
+  const rs = store.getState();
+  const { i18n } = rs;
+  const result: MenuItemConstructorOptions[] = [];
+  for (const item of template) {
+    const opts: MenuItemConstructorOptions = {};
+    if (item.localizedLabel) {
+      opts.label = t(i18n, item.localizedLabel);
+    }
+    if (item.action) {
+      const { action } = item;
+      opts.click = () => {
+        store.dispatch(action);
+      };
+    }
+    if (item.type) {
+      opts.type = item.type;
+    }
+    if (item.submenu) {
+      opts.submenu = convertTemplate(store, item.submenu);
+    }
+    if (item.accelerator) {
+      opts.accelerator = item.accelerator;
+    }
+    result.push(opts);
+  }
+  return result;
+}

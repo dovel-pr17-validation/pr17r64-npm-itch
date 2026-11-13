@@ -1,0 +1,30 @@
+import styled, * as styles from "renderer/styles";
+import classNames from "classnames";
+
+interface LabelProps {
+  active?: boolean;
+  className?: string;
+}
+
+const Label = styled.label
+  .withConfig({
+    shouldForwardProp: (prop) => (prop as string) !== "active",
+  })
+  .attrs((props: LabelProps) => ({
+    className: classNames(props.className, { active: props.active }),
+  }))<LabelProps>`
+  background: ${(props) => props.theme.explanation};
+  padding: 8px 11px;
+  font-size: 14px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+
+  ${styles.prefChunk};
+
+  &.active {
+    ${styles.prefChunkActive};
+  }
+`;
+
+export default Label;

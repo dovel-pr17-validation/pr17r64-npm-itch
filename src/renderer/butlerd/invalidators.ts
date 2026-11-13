@@ -1,0 +1,33 @@
+import { RequestCreator } from "@itchio/butlerd";
+import { actions, ActionCreator } from "common/actions";
+import * as messages from "common/butlerd/messages";
+
+type MessageType = RequestCreator<any, any>;
+export type ActionList = ActionCreator<any>[];
+
+export const invalidators = new Map<MessageType, ActionList>();
+
+invalidators.set(messages.FetchProfileOwnedKeys, [actions.commonsUpdated]);
+invalidators.set(messages.FetchGameOwnership, [
+  actions.commonsUpdated,
+  actions.bundleOwnershipsSynced,
+]);
+invalidators.set(messages.FetchProfileOwnedBundles, [
+  actions.bundleOwnershipsSynced,
+]);
+invalidators.set(messages.FetchCaves, [actions.commonsUpdated]);
+invalidators.set(messages.FetchCave, [actions.commonsUpdated]);
+invalidators.set(messages.PublishListChannels, [actions.pushDone]);
+invalidators.set(messages.PublishListBuilds, [
+  actions.pushDone,
+  actions.pushFailed,
+]);
+invalidators.set(messages.InstallLocationsList, [
+  actions.commonsUpdated,
+  actions.installLocationsChanged,
+]);
+invalidators.set(messages.FetchProfileCollections, [
+  actions.collectionsChanged,
+]);
+invalidators.set(messages.FetchCollection, [actions.collectionsChanged]);
+invalidators.set(messages.FetchCollectionGames, [actions.collectionsChanged]);

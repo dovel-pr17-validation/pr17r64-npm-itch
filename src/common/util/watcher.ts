@@ -1,0 +1,128 @@
+import { getErrorStack } from "common/butlerd/errors";
+import { Store, RootState, Action } from "common/types";
+
+import debounceAsync from "common/util/debounce-async";
+
+import { Logger } from "common/logger";
+import { actions } from "common/actions";
+
+interface IReactor<T extends Object> {
+  (store: Store, action: Action<T>): Promise<void>;
+}
+
+interface Schedule {
+  (f: () => void): void;
+  dispatch: (a: Action<any>) => void;
+}
+type Selector = (rs: RootState) => void;
+type SelectorMaker = (store: Store, schedule: Schedule) => Selector;
+
+/**
+ * Allows reacting to certain actions being dispatched
+ */
+export class Watcher {
+  logger: Logger;
+  reactors: {
+    [key: string]: IReactor<any>[];
+  };
+
+  subs: Watcher[];
+
+  constructor(logger: Logger) {
+    this.logger = logger;
+    this.reactors = {};
+    this.subs = [];
+  }
+
+  /**
+   * Registers a lazily-created reselect selector that will be called
+   * on every tick if the state has changed since the last tick
+   */
+  onStateChange({ makeSelector }: { makeSelector: SelectorMaker }) {
+    let oldRs: RootState | null = null;
+    let selector: Selector;
+
+    const actionName = "tick";
+    this.addWatcher(actionName, async (store, action) => {
+      let rs = store.getState();
+      if (rs === oldRs) {
+        return;
+      }
+      oldRs = rs;
+
+      if (!selector) {
+        const scheduleFn = (f: () => void) => {
+          setImmediate(() => {
+            try {
+              f();
+            } catch (e) {
+              this.logger.error(
+                `In scheduled stateChange: ${getErrorStack(e)}`
+              );
+            }
+          });
+        };
+        const schedule: Schedule = Object.assign(scheduleFn, {
+          dispatch: (action: Action<any>) => {
+            scheduleFn(() => store.dispatch(action));
+          },
+        });
+        selector = makeSelector(store, schedule);
+      }
+
+      try {
+        selector(rs);
+      } catch (e) {
+        this.logger.error(`In state selector: ${getErrorStack(e)}`);
+      }
+    });
+  }
+
+  /**
+   * Registers a reactor for a given action
+   */
+  on<T extends Object>(
+    actionCreator: (payload: T) => Action<T>,
+    reactor: (store: Store, action: Action<T>) => Promise<void>
+  ) {
+    // create a dummy action to get the type
+    const type = actionCreator({} as any as T).type;
+    this.addWatcher(type, reactor);
+  }
+
+  onDebounced<T extends Object>(
+    actionCreator: (payload: T) => Action<T>,
+    ms: number,
+    reactor: (store: Store, action: Action<T>) => Promise<void>
+  ) {
+    // create a dummy action to get the type
+    const type = actionCreator({} as any as T).type;
+    this.addWatcher(type, debounceAsync(reactor, ms));
+  }
+
+  validate() {
+    for (const key of Object.keys(this.reactors)) {
+      if (!actions.hasOwnProperty(key)) {
+        throw new Error(`trying to react to unknown action type ${key}`);
+      }
+    }
+  }
+
+  addSub(watcher: Watcher) {
+    this.subs.push(watcher);
+  }
+
+  removeSub(watcher: Watcher) {
+    const index = this.subs.indexOf(watcher);
+    if (index !== -1) {
+      this.subs.splice(index, 1);
+    }
+  }
+
+  protected addWatcher(type: string, reactor: IReactor<any>) {
+    if (!this.reactors[type]) {
+      this.reactors[type] = [];
+    }
+    this.reactors[type].push(reactor);
+  }
+}

@@ -1,0 +1,468 @@
+import { actions } from "common/actions";
+import { ITCH_URL_RE, isItchioOrigin } from "common/constants/urls";
+import { Space } from "common/helpers/space";
+import { Store, TabPage } from "common/types";
+import { Watcher } from "common/util/watcher";
+import { BrowserWindow, WebContents, webContents } from "electron";
+import { mainLogger } from "main/logger";
+import { openAppDevTools } from "main/reactors/open-app-devtools";
+import { hookWebContentsContextMenu } from "main/reactors/web-contents-context-menu";
+import { parseWellKnownUrl } from "main/reactors/web-contents/parse-well-known-url";
+import {
+  forgetWebContents,
+  getWebContents,
+  storeWebContents,
+} from "main/reactors/web-contents/web-contents-state";
+import { getNativeWindow } from "main/reactors/winds";
+
+const logger = mainLogger.child(__filename);
+
+const SHOW_DEVTOOLS = parseInt(process.env.DEVTOOLS || "0", 10) > 1;
+
+type WebContentsCallback<T> = (wc: Electron.WebContents) => T;
+
+function withWebContents<T>(
+  store: Store,
+  wind: string,
+  tab: string,
+  cb: WebContentsCallback<T>
+): T | null {
+  const wc = getWebContents(wind, tab);
+  if (wc && !wc.isDestroyed()) {
+    return cb(wc);
+  }
+  return null;
+}
+
+function loadURL(wc: WebContents, url: string): boolean {
+  if (ITCH_URL_RE.test(url)) {
+    return true;
+  }
+
+  // Because of restrictions elsewhere, this likely only
+  // occurs if the most recent url in a given tab was an
+  // external page back when the app permitted that
+  if (isItchioOrigin(url)) {
+    wc.loadURL(url);
+    return true;
+  }
+
+  return false;
+}
+
+export default function (watcher: Watcher) {
+  watcher.on(actions.windHtmlFullscreenChanged, async (store, action) => {
+    const { wind, htmlFullscreen } = action.payload;
+
+    if (htmlFullscreen) {
+      logger.warn(`fullscreen: reimplement`);
+    }
+  });
+
+  watcher.on(actions.tabGotWebContents, async (store, action) => {
+    const { wind, tab, webContentsId } = action.payload;
+    const rs = store.getState();
+    const initialURL = rs.winds[wind].tabInstances[tab].location?.url;
+    if (!initialURL) {
+      logger.warn(`Tab ${tab} has no location yet, not hooking web contents`);
+      return;
+    }
+
+    const wc = webContents.fromId(webContentsId);
+    if (!wc) {
+      logger.warn(`Could not find webContents ${webContentsId} for tab ${tab}`);
+      return;
+    }
+    storeWebContents(wind, tab, wc);
+
+    logger.debug(`Loading url '${initialURL}'`);
+    await hookWebContents(store, wind, tab, wc);
+    loadURL(wc, initialURL);
+  });
+
+  watcher.on(actions.tabLosingWebContents, async (store, action) => {
+    const { wind, tab } = action.payload;
+    logger.debug(`Tab ${tab} losing web contents!`);
+
+    forgetWebContents(wind, tab);
+  });
+
+  watcher.on(actions.analyzePage, async (store, action) => {
+    const { wind, tab, url } = action.payload;
+    if (!isItchioOrigin(url)) {
+      return;
+    }
+    await withWebContents(store, wind, tab, async (wc) => {
+      const onNewPath = (url: string, resource: string) => {
+        if (resource) {
+          logger.debug(`Got resource ${resource}`);
+          store.dispatch(
+            actions.evolveTab({
+              wind,
+              tab,
+              url,
+              resource,
+              replace: true,
+              onlyIfMatchingURL: true,
+              fromWebContents: true,
+            })
+          );
+        }
+      };
+
+      const code = `(document.querySelector('meta[name="itch:path"]') || {}).content`;
+      const newPath = await wc.executeJavaScript(code);
+      onNewPath(url, newPath);
+    });
+  });
+
+  watcher.on(actions.tabReloaded, async (store, action) => {
+    const { wind, tab } = action.payload;
+    withWebContents(store, wind, tab, (wc) => {
+      wc.reload();
+    });
+  });
+
+  watcher.on(actions.tabStop, async (store, action) => {
+    const { wind, tab } = action.payload;
+    withWebContents(store, wind, tab, (wc) => {
+      wc.stop();
+    });
+  });
+
+  watcher.on(actions.commandLocation, async (store, action) => {
+    const { wind } = action.payload;
+    const { tab } = store.getState().winds[wind].navigation;
+    store.dispatch(
+      actions.focusLocationBar({
+        wind,
+        tab,
+      })
+    );
+
+    const nw = getNativeWindow(store.getState(), wind);
+    if (nw && nw.webContents) {
+      nw.webContents.focus();
+    }
+  });
+
+  watcher.on(actions.focusSearch, async (store, action) => {
+    const wind = "root";
+    const nw = getNativeWindow(store.getState(), wind);
+    if (nw && nw.webContents) {
+      nw.webContents.focus();
+    }
+  });
+
+  watcher.on(actions.commandBack, async (store, action) => {
+    const { wind } = action.payload;
+    store.dispatch(actions.blurLocationBar({}));
+  });
+
+  watcher.on(actions.openDevTools, async (store, action) => {
+    const { wind, tab } = action.payload;
+    if (tab) {
+      const { tab } = store.getState().winds[wind].navigation;
+      withWebContents(store, wind, tab, (wc) => {
+        wc.openDevTools({ mode: "detach" });
+      });
+    } else {
+      const bw = BrowserWindow.getFocusedWindow();
+      if (bw) {
+        openAppDevTools(bw);
+      }
+    }
+  });
+
+  watcher.on(actions.inspect, async (store, action) => {
+    const { webContentsId, x, y } = action.payload;
+    const wc = webContents.fromId(webContentsId);
+    if (wc && !wc.isDestroyed()) {
+      const dwc = wc.devToolsWebContents;
+      if (dwc) {
+        wc.devToolsWebContents.focus();
+      } else {
+        wc.openDevTools({ mode: "detach" });
+      }
+      wc.inspectElement(x, y);
+    }
+  });
+
+  watcher.on(actions.tabGoBack, async (store, action) => {
+    const { wind, tab } = action.payload;
+    const rs = store.getState();
+    const ti = rs.winds[wind].tabInstances[tab];
+    if (!ti) {
+      return;
+    }
+
+    store.dispatch(
+      actions.tabGoToIndex({
+        wind,
+        tab,
+        index: ti.currentIndex - 1,
+      })
+    );
+  });
+
+  watcher.on(actions.tabGoForward, async (store, action) => {
+    const { wind, tab } = action.payload;
+    const rs = store.getState();
+    const ti = rs.winds[wind].tabInstances[tab];
+    if (!ti) {
+      return;
+    }
+
+    store.dispatch(
+      actions.tabGoToIndex({
+        wind,
+        tab,
+        index: ti.currentIndex + 1,
+      })
+    );
+  });
+
+  watcher.on(actions.tabGoToIndex, async (store, action) => {
+    const { wind, tab, index } = action.payload;
+    const rs = store.getState();
+    const ti = rs.winds[wind].tabInstances[tab];
+    if (!ti) {
+      return;
+    }
+
+    if (index < 0 || index >= ti.history.length) {
+      return;
+    }
+
+    store.dispatch(
+      actions.tabWentToIndex({
+        wind,
+        tab,
+        index,
+        oldIndex: ti.currentIndex,
+      })
+    );
+  });
+
+  watcher.on(actions.tabWentToIndex, async (store, action) => {
+    const rs = store.getState();
+    const { wind, tab, oldIndex, index, fromWebContents } = action.payload;
+    if (fromWebContents) {
+      return;
+    }
+
+    withWebContents(store, wind, tab, (wc) => {
+      const url = Space.fromState(rs, wind, tab).url();
+      if (url) {
+        loadURL(wc, url);
+      }
+    });
+  });
+
+  watcher.on(actions.evolveTab, async (store, action) => {
+    const { wind, tab, url, replace, fromWebContents } = action.payload;
+    if (replace || fromWebContents) {
+      return;
+    }
+
+    withWebContents(store, wind, tab, async (wc) => {
+      const webUrl = wc.getURL();
+      if (webUrl !== url) {
+        logger.debug(
+          `WebContents has\n--> ${webUrl}\ntab evolved to\n--> ${url}\nlet's load`
+        );
+        loadURL(wc, url);
+      } else {
+        logger.debug(
+          `WebContents has\n--> ${webUrl}\ntab evolved to\n--> ${url}\nwe're good.`
+        );
+      }
+    });
+  });
+}
+
+async function hookWebContents(
+  store: Store,
+  wind: string,
+  tab: string,
+  wc: Electron.WebContents
+) {
+  let setLoading = (loading: boolean) => {
+    store.dispatch(actions.tabLoadingStateChanged({ wind, tab, loading }));
+  };
+  let pushPageUpdate = (page: Partial<TabPage>) => {
+    store.dispatch(
+      actions.tabPageUpdate({
+        wind,
+        tab,
+        page,
+      })
+    );
+  };
+  setLoading(wc.isLoading());
+
+  wc.on("certificate-error", (ev, url, error, certificate, cb) => {
+    cb(false);
+    logger.warn(
+      `Certificate error ${error} for ${url}, issued by ${certificate.issuerName} for ${certificate.subjectName}`
+    );
+  });
+
+  wc.on(
+    "did-fail-load",
+    (ev, errorCode, errorDescription, validatedURL, isMainFrame) => {
+      if (!isMainFrame) {
+        return;
+      }
+      logger.warn(
+        `Did fail load: ${errorCode}, ${errorDescription} for ${validatedURL}`
+      );
+    }
+  );
+
+  wc.once("did-finish-load", () => {
+    logger.debug(`did-finish-load (once)`);
+    hookWebContentsContextMenu(wc, wind, store);
+
+    if (SHOW_DEVTOOLS) {
+      wc.openDevTools({ mode: "detach" });
+    }
+  });
+
+  wc.on("did-finish-load", () => {
+    store.dispatch(
+      actions.analyzePage({
+        wind,
+        tab,
+        url: wc.getURL(),
+      })
+    );
+  });
+
+  wc.on("did-start-loading", () => {
+    setLoading(true);
+  });
+
+  wc.on("did-stop-loading", () => {
+    setLoading(false);
+  });
+
+  wc.on("page-title-updated", (ev, title: string) => {
+    pushPageUpdate({
+      label: title,
+    });
+  });
+
+  wc.on("page-favicon-updated", (ev, favicons) => {
+    pushPageUpdate({
+      favicon: favicons[0],
+    });
+  });
+
+  wc.setWindowOpenHandler(({ url, disposition }) => {
+    logger.debug(`new-window fired for ${url} (${disposition})`);
+
+    // itch:// links open a new window when the page is embedded (e.g. the
+    // randomizer's iframe renders game pages with target="_blank" links)
+    if (ITCH_URL_RE.test(url)) {
+      store.dispatch(actions.handleItchioURI({ uri: url }));
+      return { action: "deny" };
+    }
+
+    if (isItchioOrigin(url)) {
+      if (disposition === "new-window") {
+        // shift+click
+        store.dispatch(actions.openInExternalBrowser({ url }));
+      } else if (
+        disposition === "foreground-tab" ||
+        disposition === "background-tab"
+      ) {
+        // cmd/ctrl+click, middle click, target="_blank"
+        if (store.getState().preferences.enableTabs) {
+          store.dispatch(
+            actions.navigate({
+              wind,
+              url,
+              background: disposition === "background-tab",
+            })
+          );
+        } else {
+          // no in-app tab to open it in, so hand it to the system browser
+          // like shift+click does
+          store.dispatch(actions.openInExternalBrowser({ url }));
+        }
+      } else {
+        wc.loadURL(url);
+      }
+    } else if (url.startsWith("https:") || url.startsWith("http:")) {
+      // only open http/https URLs in external browser, ignore
+      // about:blank and other non-navigable URLs
+      store.dispatch(actions.openInExternalBrowser({ url: url }));
+    }
+    return { action: "deny" };
+  });
+
+  enum NavMode {
+    Append,
+    Replace,
+  }
+
+  const didNavigate = (url: string, navMode?: NavMode) => {
+    let resource: string | undefined;
+    const result = parseWellKnownUrl(url);
+    if (result) {
+      url = result.url;
+      resource = result.resource ?? undefined;
+      logger.debug(`Parsed well-known url: ${url} => ${resource}`);
+    }
+
+    store.dispatch(
+      actions.evolveTab({
+        wind,
+        tab,
+        url,
+        label: wc.getTitle(),
+        resource,
+        replace: navMode === NavMode.Replace,
+        fromWebContents: true,
+      })
+    );
+  };
+
+  const commit = (
+    reason: "will-navigate" | "did-navigate",
+    event: any,
+    url: string // latest URL
+  ) => {
+    const space = Space.fromStore(store, wind, tab);
+    const wcTitle = wc.getTitle();
+    if (
+      wcTitle !== url &&
+      space.label() !== wc.getTitle() &&
+      !/^itch:/i.test(url)
+    ) {
+      // page-title-updated does not always fire, so a navigation (in-page or not)
+      // is a good place to check.
+      // we also check that the webContents' title is not its URL, which happens
+      // while it's currently loading a page.
+      logger.debug(`pushing webContents title ${wcTitle}`);
+      pushPageUpdate({
+        url,
+        label: wcTitle,
+      });
+    }
+
+    didNavigate(url, NavMode.Append);
+  };
+  wc.on("did-navigate", (event, url) => {
+    commit("did-navigate", event, url);
+  });
+  // keeps the tab's URL in sync with pushState/hash navigation, so a later
+  // analyzePage's evolveTab (onlyIfMatchingURL) matches the current page
+  wc.on("did-navigate-in-page", (event, url, isMainFrame) => {
+    if (!isMainFrame) {
+      return;
+    }
+    commit("did-navigate", event, url);
+  });
+}

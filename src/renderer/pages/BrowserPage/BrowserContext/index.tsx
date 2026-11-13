@@ -1,0 +1,67 @@
+import * as messages from "common/butlerd/messages";
+import { Dispatch } from "common/types";
+import { ambientTab } from "common/util/navigation";
+import React from "react";
+import butlerCaller from "renderer/hocs/butlerCaller";
+import { hookWithProps } from "renderer/hocs/hook";
+import { withTab } from "renderer/hocs/withTab";
+import { browserContextHeight } from "renderer/pages/BrowserPage/BrowserContext/BrowserContextConstants";
+import BrowserContextGame from "renderer/pages/BrowserPage/BrowserContext/BrowserContextGame";
+import styled from "renderer/styles";
+
+const FetchGame = butlerCaller(messages.FetchGame);
+
+const BrowserContextContainer = styled.div`
+  height: ${browserContextHeight}px;
+
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+`;
+
+class BrowserContext extends React.PureComponent<Props> {
+  override render() {
+    const { gameId, sequence } = this.props;
+    if (!gameId) {
+      return null;
+    }
+
+    return (
+      <BrowserContextContainer>
+        <FetchGame
+          params={{ gameId }}
+          sequence={sequence}
+          render={this.renderFetchContents}
+        />
+      </BrowserContextContainer>
+    );
+  }
+
+  renderFetchContents = FetchGame.renderCallback(({ result }) => {
+    if (!result || !result.game) {
+      return null;
+    }
+    return <BrowserContextGame game={result.game} />;
+  });
+}
+
+interface Props {
+  tab: string;
+  dispatch: Dispatch;
+
+  gameId: number | null | undefined;
+  sequence: number;
+}
+
+export default withTab(
+  hookWithProps(BrowserContext)((map) => ({
+    sequence: map((rs, props) => ambientTab(rs, props).sequence),
+    gameId: map((rs, props) => {
+      const { resource } = ambientTab(rs, props);
+      if (resource && resource.prefix === "games") {
+        return resource.numericId;
+      }
+      return null;
+    }),
+  }))(BrowserContext)
+);

@@ -1,0 +1,55 @@
+import { GameUpdatesState } from "common/types";
+
+import { actions } from "common/actions";
+import reducer from "common/reducers/reducer";
+
+const initialState = {
+  updates: {},
+  checking: false,
+  progress: -1,
+} as GameUpdatesState;
+
+export default reducer<GameUpdatesState>(initialState, (on) => {
+  on(actions.gameUpdateCheckStatus, (state, action) => {
+    const { checking, progress } = action.payload;
+    return {
+      ...state,
+      checking,
+      progress,
+    };
+  });
+
+  on(actions.gameUpdateAvailable, (state, action) => {
+    const { update } = action.payload;
+
+    return {
+      ...state,
+      updates: {
+        ...state.updates,
+        [update.caveId]: update,
+      },
+    };
+  });
+
+  on(actions.queueGameUpdate, (state, action) => {
+    const { update } = action.payload;
+
+    const updates = { ...state.updates };
+    delete updates[update.caveId];
+    return {
+      ...state,
+      updates,
+    };
+  });
+
+  on(actions.snoozeCave, (state, action) => {
+    const { caveId } = action.payload;
+
+    const updates = { ...state.updates };
+    delete updates[caveId];
+    return {
+      ...state,
+      updates,
+    };
+  });
+});

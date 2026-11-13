@@ -1,0 +1,923 @@
+import { Store as ReduxStore } from "redux";
+
+export * from "common/types/errors";
+export * from "common/types/net";
+
+import {
+  GameUpdate,
+  Game,
+  CaveSummary,
+  DownloadKeySummary,
+  Download,
+  DownloadProgress,
+  Platform,
+  Profile,
+  SandboxType,
+  PublishPushComparison,
+  PublishPushTopChangedFiles,
+} from "common/butlerd/messages";
+import { Endpoint } from "@itchio/butlerd";
+import { modalShape } from "common/modals";
+export interface Store extends ReduxStore<RootState> {}
+
+export interface Dispatch {
+  (action: Action<any>): void;
+}
+
+export interface Action<T extends Object> {
+  type: string;
+  payload: T;
+}
+
+interface Watcher {
+  addSub(sub: Watcher): void;
+  removeSub(sub: Watcher): void;
+  on<T extends Object>(
+    actionCreator: (payload: T) => Action<T>,
+    reactor: (store: Store, action: Action<T>) => Promise<void> | void
+  ): void;
+}
+
+export interface ChromeStore extends Store {
+  watcher: Watcher;
+}
+
+export type ClassificationAction = "launch" | "open";
+
+/**
+ * The entire application state, following the redux philosophy
+ */
+export interface RootState {
+  system: SystemState;
+  setup: SetupState;
+  profile: ProfileState;
+  winds: WindsState;
+  i18n: I18nState;
+  ui: UIState;
+  preferences: PreferencesState;
+  tasks: TasksState;
+  downloads: DownloadsState;
+  status: StatusState;
+  gameUpdates: GameUpdatesState;
+
+  /** commonly-needed subset of DB rows available in a compact & performance-friendly format */
+  commons: CommonsState;
+
+  systemTasks: SystemTasksState;
+  broth: BrothState;
+  butlerd: ButlerdState;
+  upload: UploadState;
+}
+
+export type PushJobStatus = "pushing" | "processing" | "failed" | "cancelled";
+
+export interface PushJob {
+  id: string;
+  gameId: number;
+  target: string;
+  channel: string;
+  src: string;
+  buildId?: number;
+  status: PushJobStatus;
+  progress: number;
+  /** Snapshot fields from the picked game so synthetic in-flight rows
+   *  can render before the real Build is fetched. */
+  gameTitle?: string;
+  gameCoverUrl?: string;
+  gameStillCoverUrl?: string;
+  /** Estimated seconds remaining (0 if unknown). */
+  eta?: number;
+  /** Upload bytes per second (0 if unknown). */
+  bps?: number;
+  /** Bytes read from the source so far while diffing. */
+  readBytes?: number;
+  /** Total bytes in the source container. */
+  totalBytes?: number;
+  /** Bytes of the patch uploaded to itch.io so far. */
+  uploadedBytes?: number;
+  /** Compressed patch size produced so far. */
+  patchBytes?: number;
+  label?: string;
+  message?: string;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export type PreviewStatus = "running" | "done" | "failed" | "cancelled";
+
+export interface PreviewState {
+  /** uuid for this preview run; late notifications with a stale id are dropped */
+  id: string;
+  status: PreviewStatus;
+  /** Snapshot of inputs the preview was started with — the result reflects
+   *  these, not the live form state. Used to ignore stale notifications and
+   *  could power a "stale" banner if the modal needed one. */
+  target: string;
+  channel: string;
+  src: string;
+  progress: number;
+  eta?: number;
+  bps?: number;
+  readBytes?: number;
+  totalBytes?: number;
+  /** Result fields, populated on previewDone. */
+  hasParent?: boolean;
+  parentBuildId?: number;
+  /** Total uncompressed size of the source container, in bytes. */
+  sourceSize?: number;
+  comparison?: PublishPushComparison;
+  /** Per-category top changed files (each capped at 20, sorted by size
+   *  desc / path asc). Always populated when status === "done"; individual
+   *  category arrays may be empty. The merged "biggest changes overall"
+   *  view is reconstructed in the renderer. */
+  topChangedFiles?: PublishPushTopChangedFiles;
+  /** Failure or cancellation message. */
+  message?: string;
+  startedAt: number;
+  finishedAt?: number;
+}
+
+export interface UploadState {
+  jobs: { [id: string]: PushJob };
+  jobOrder: string[];
+  /** At most one preview is in-flight or pending review at a time — only one
+   *  PushBuild dialog is open and previews are dialog-scoped. */
+  currentPreview?: PreviewState;
+}
+
+export interface BrothState {
+  packageNames: string[];
+  packages: PackagesState;
+}
+
+export interface PackagesState {
+  [key: string]: PackageState;
+}
+
+export interface ButlerdState {
+  /** null until butlerd has been started */
+  startedAt: number | null;
+  endpoint?: Endpoint;
+}
+
+export interface PackageState {
+  stage: "assess" | "download" | "install" | "idle" | "need-restart";
+  version?: string;
+  versionPrefix?: string;
+  channel?: string;
+  progressInfo?: ProgressInfo;
+  availableVersion?: string;
+  /** the install folder isn't writable by the current user: applying
+   * availableVersion needs itch-setup to run elevated (Windows) */
+  needsElevation?: boolean;
+}
+
+export interface CommonsState {
+  downloadKeys: {
+    [downloadKeyId: string]: DownloadKeySummary;
+  };
+  downloadKeyIdsByGameId: {
+    [gameId: string]: string[];
+  };
+
+  caves: {
+    [caveId: string]: CaveSummary;
+  };
+  caveIdsByGameId: {
+    [gameId: string]: string[];
+  };
+
+  /** size on disk (in bytes) of each install location */
+  locationSizes: {
+    [id: string]: number;
+  };
+}
+
+export interface GameUpdatesState {
+  /** pending game updates */
+  updates: {
+    [caveId: string]: GameUpdate;
+  };
+
+  /** are we currently checking? */
+  checking: boolean;
+
+  /** check progress */
+  progress: number;
+}
+
+export type ModalAction = Action<any> | Action<any>[];
+
+export interface ModalButton {
+  /** HTML id for this button */
+  id?: string;
+
+  /** icomoon icon to use for button */
+  icon?: string;
+
+  /** text to show on button */
+  label: LocalizedString;
+
+  /** what should happen when clicking the button */
+  action?: ModalAction | "widgetResponse";
+
+  /** use this to specify custom CSS classes (which is both naughty and nice) */
+  className?: string;
+
+  /** Tags to tack after label */
+  tags?: ModalButtonTag[];
+
+  timeAgo?: {
+    date: Date | string;
+  };
+
+  left?: boolean;
+}
+
+export interface ModalButtonTag {
+  label?: LocalizedString;
+  icon?: string;
+}
+
+// FIXME: that's naughty - just make static buttons be constants instead, that works.
+export type ModalButtonSpec = ModalButton | "ok" | "cancel" | "nevermind";
+
+export interface ModalBase {
+  /** window this modal belongs to */
+  wind: string;
+
+  /** generated identifier for this modal */
+  id?: string;
+
+  /** title of the modal */
+  title: LocalizedString;
+
+  /** main body of text */
+  message?: LocalizedString;
+
+  /** secondary body of text */
+  detail?: LocalizedString;
+
+  /** an image to show prominently in the modal */
+  stillCoverUrl?: string;
+  coverUrl?: string;
+
+  /** main buttons (in list format) */
+  bigButtons?: ModalButtonSpec[];
+
+  /** secondary buttons */
+  buttons?: ModalButtonSpec[];
+
+  unclosable?: boolean;
+  fullscreen?: boolean;
+}
+
+export interface Modal extends ModalBase {
+  /** name of modal widget to render */
+  widget?: keyof typeof modalShape;
+
+  /** parameters to pass to React component (null for naked modals) */
+  widgetParams?: {} | null;
+}
+
+export interface ModalUpdate {
+  /** the modal's unique identifier */
+  id: string;
+
+  /** the parameters for the widget being shown in the modal */
+  widgetParams: any;
+}
+
+export type ModalsState = Modal[];
+
+export interface ItchAppTabs {
+  /** id of current tab at time of snapshot */
+  current: string;
+
+  /** list of transient tabs when the snapshot was taken */
+  items: TabDataSave[];
+}
+
+export type ProxySource = "os" | "env";
+
+export interface ProxySettings {
+  /** if non-null, the proxy specified by the OS (as sniffed by Chromium) */
+  proxy?: string;
+
+  /** if non-null, where the proxy settings come from */
+  proxySource?: ProxySource;
+}
+
+export interface SystemState {
+  /** app name, like 'itch' or 'kitch' */
+  appName: string;
+
+  /** version string, for example '25.0.0' */
+  appVersion: string;
+
+  /** the platform string, in itch format */
+  platform: Platform;
+
+  /** 'ia32' or 'x64' */
+  arch: string;
+
+  /** true if running on macOS */
+  macos: boolean;
+
+  /** true if running on Windows */
+  windows: boolean;
+
+  /** true if running on GNU/Linux */
+  linux: boolean;
+
+  /** 2-letter language code sniffed from user's OS */
+  sniffedLanguage?: string;
+
+  /** path of ~ */
+  homePath: string;
+
+  /** ~/.config/itch, ~/Library/Application Data/itch, %APPDATA%/itch */
+  userDataPath: string;
+
+  /** if non-null, the proxy specified by the OS (as sniffed by Chromium) */
+  proxy?: string;
+
+  /** if non-null, where the proxy settings come from */
+  proxySource?: ProxySource;
+
+  /** true if we're about to quit */
+  quitting?: boolean;
+
+  /** true if we're currently scanning install locations */
+  locationScanProgress?: number | null;
+}
+
+export interface SystemTasksState {
+  /** timestamp for next components update check (milliseconds since epoch) */
+  nextComponentsUpdateCheck: number;
+
+  /** timestamp for next game update check (milliseconds since epoch) */
+  nextGameUpdateCheck: number;
+}
+
+export interface SetupOperation {
+  message: LocalizedString;
+  icon: string;
+  rawError?: Error;
+  log?: string;
+  stage?: string;
+  progressInfo?: ProgressInfo;
+}
+
+export interface SetupState {
+  done: boolean;
+  blockingOperation: SetupOperation | null;
+}
+
+export interface ProfileState {
+  /** null until the user has logged in */
+  profile: Profile | null;
+  login: ProfileLoginState;
+
+  itchioUris: string[];
+}
+
+export interface WindsState {
+  [wind: string]: WindState;
+}
+
+export interface WindState {
+  navigation: NavigationState;
+  modals: ModalsState;
+  tabInstances: TabInstances;
+  native: NativeWindowState;
+  properties: WindPropertiesState;
+}
+
+export interface NativeWindowState {
+  /** id of the electron BrowserWindow the window is displayed in,
+   * null before the window is opened and after it's destroyed */
+  id: number | null;
+
+  /** true if window has focus */
+  focused: boolean;
+
+  /** true if window is fullscreen */
+  fullscreen: boolean;
+
+  /** true if window is html-fullscreen */
+  htmlFullscreen: boolean;
+
+  /** true if window is maximized */
+  maximized: boolean;
+}
+
+export interface ProfileLoginState {
+  error?: Error;
+  blockingOperation: SetupOperation | null;
+  lastUsername?: string;
+  oauthURL?: string;
+}
+
+export interface NavigationState {
+  /** opened tabs */
+  openTabs: string[];
+
+  /** current tab id */
+  tab: string;
+}
+
+export interface WindPropertiesState {
+  /** what the window was opened on */
+  initialURL: string;
+
+  /** the window's role, null only in the initial state (windOpened is
+   * applied before the wind state is stored) */
+  role: WindRole | null;
+}
+
+export interface I18nResourceSet {
+  [lang: string]: I18nResources;
+}
+
+export interface I18nResources {
+  [key: string]: string;
+}
+
+/** Info about a locale. See locales.json for a list that ships with the app. */
+export interface LocaleInfo {
+  /** 2-letter language code */
+  value: string;
+
+  /** native name of language (English, Français, etc.) */
+  label: string;
+}
+
+export interface I18nState {
+  /** 2-letter code for the language the app is currently displayed in */
+  lang: string;
+
+  /** all translated strings */
+  strings: I18nResourceSet;
+
+  locales: LocaleInfo[];
+}
+
+export interface UIMenuState {
+  template: MenuTemplate;
+}
+
+export interface UIState {
+  menu: UIMenuState;
+  search: UISearchState;
+}
+
+export interface UISearchState {
+  open: boolean;
+}
+
+interface InstallLocation {
+  /** path on disk (empty for appdata) */
+  path: string;
+
+  /** set to true when deleted. still keeping the record around in case some caves still exist with it */
+  deleted?: boolean;
+}
+
+export interface PreferencesState {
+  /** do not make any network requests */
+  offlineMode: boolean;
+
+  /**
+   * DEPRECATED: this is just an import from <v23 itch.
+   */
+  installLocations: {
+    [id: string]: string;
+  };
+
+  /**
+   * where to install games by default
+   */
+  defaultInstallLocation: string;
+
+  /** use sandbox */
+  isolateApps: boolean;
+
+  /** sandbox runner to use on Linux (unset means auto) */
+  linuxSandboxType?: SandboxType;
+
+  /** disable network access in Linux sandbox (unset means default behavior) */
+  linuxSandboxNoNetwork?: boolean;
+
+  /** raw text for Linux sandbox env var passthrough (unset means default behavior) */
+  linuxSandboxAllowEnv?: string;
+
+  /** when closing window, keep running in tray */
+  closeToTray: boolean;
+
+  /** notify when a download has been installed or updated */
+  readyNotification: boolean;
+
+  /** show the advanced section of settings */
+  showAdvanced: boolean;
+
+  /** language picked by the user, absent until they pick one */
+  lang?: string;
+
+  /** if true, user's already seen the 'minimize to tray' notification */
+  gotMinimizeNotification: boolean;
+
+  /** should the itch app start on os startup? */
+  openAtLogin: boolean;
+
+  /** when the itch app starts at login, should it be hidden? */
+  openAsHidden: boolean;
+
+  /** show consent dialog before applying any game updates */
+  manualGameUpdates: boolean;
+
+  /** prevent display sleep while playing */
+  preventDisplaySleep: boolean;
+
+  /** disable all webviews */
+  disableBrowser: boolean;
+
+  /** disable GPU acceleration, see #809 */
+  disableHardwareAcceleration: boolean;
+
+  /** enable tabs - if false, use simple interface */
+  enableTabs: boolean;
+
+  /** the last version of the app we've successfully run a setup of, see https://github.com/itchio/itch/issues/1997 */
+  lastSuccessfulSetupVersion?: string;
+
+  /** whether or not we've already imported appdata as an install location */
+  importedOldInstallLocations: boolean;
+
+  /** Steam account (userdata folder) last chosen in the Steam shortcuts dialog */
+  steamUserId?: string;
+
+  /** Recently-used directories from the Push new build modal, persisted
+   *  so the modal's Recent folders list survives app restarts. Most
+   *  recent first, capped at MAX_RECENT_PUSH_FOLDERS. */
+  recentPushFolders: RecentPushFolder[];
+}
+
+export interface RecentPushFolder {
+  /** Absolute path of the directory or .zip that was pushed. */
+  path: string;
+  /** Epoch ms of the most recent push from this path. */
+  lastUsedAt: number;
+  /** gameId the path was last pushed to (for re-prefilling the picker). */
+  gameId?: number;
+}
+
+export interface Task {
+  /** generated identifier */
+  id: string;
+
+  /** name of the task: install, uninstall, etc. */
+  name: TaskName;
+
+  /** progress in the [0, 1] interval */
+  progress: number;
+
+  /** id of the game this task is for (which game we're launching, etc.) */
+  gameId: number;
+
+  /** id of the cave this task is for, if any */
+  caveId: string | null;
+
+  /** bytes per second at which task is being processed, if applicable */
+  bps?: number;
+
+  /** estimated time remaining for task, in seconds, if available */
+  eta?: number;
+
+  /** current stage of the task (e.g. launch: prepare/run/clean), merged
+   * in from ProgressInfo by the taskProgress reducer */
+  stage?: string;
+}
+
+export interface TasksState {
+  /** all tasks currently going on in the app (installs, uninstalls, etc.) */
+  tasks: {
+    [key: string]: Task;
+  };
+
+  /** same as tasks, grouped by gameId - there may be multiple for the same game */
+  tasksByGameId: {
+    [gameId: string]: Task[];
+  };
+
+  /** all tasks finished and not cleared yet, since the app started */
+  finishedTasks: Task[];
+}
+
+export interface DownloadsState {
+  /** All the downloads we know about, indexed by their own id */
+  items: {
+    [id: string]: Download;
+  };
+
+  progresses: {
+    [id: string]: DownloadProgress;
+  };
+
+  /** true if downloads are currently paused */
+  paused: boolean;
+
+  /** Download speeds, in bps, each item represents one second */
+  speeds: number[];
+}
+
+type OpenAtLoginErrorCause = "no_desktop_file" | "error";
+
+/**
+ * Something went wrong when applying
+ */
+export interface OpenAtLoginError {
+  /** why did applying the setting failed */
+  cause: OpenAtLoginErrorCause;
+
+  /** if cause is `error`, this is an error message */
+  message?: string;
+}
+
+export interface StatusState {
+  messages: LocalizedString[];
+  openAtLoginError: OpenAtLoginError | null;
+  reduxLoggingEnabled: boolean;
+}
+
+// i18n
+
+/**
+ * Localized messages can be just a string, or an Array arranged like so:
+ * [key: string, params: {[name: string]: string}]
+ */
+export type LocalizedString = string | any[];
+
+export interface ProgressInfo {
+  /** progress of the task between [0,1] */
+  progress: number;
+
+  /** current bytes per second */
+  bps?: number;
+
+  /** estimated time remaining, in seconds */
+  eta?: number;
+
+  stage?: string;
+
+  doneBytes?: number;
+  totalBytes?: number;
+}
+
+export interface ProgressListener {
+  (info: ProgressInfo): void;
+}
+
+export interface Runtime {
+  platform: Platform;
+}
+
+export interface MenuItem extends Electron.MenuItemConstructorOptions {
+  localizedLabel?: LocalizedString;
+  action?: Action<any>;
+  submenu?: MenuItem[];
+  id?: string;
+}
+export type MenuTemplate = MenuItem[];
+
+export interface NavigatePayload {
+  /** which window initiated the navigation */
+  wind: string;
+
+  /** the url to navigate to */
+  url: string;
+
+  /** if we know this associates with a resource, let it be known here */
+  resource?: string;
+
+  /** whether to open a new tab in the background */
+  background?: boolean;
+
+  /** whether to replace the current history entry */
+  replace?: boolean;
+}
+
+export interface OpenTabPayload extends NavigatePayload {
+  wind: string;
+
+  /** the id of the new tab to open (generated) */
+  tab: string;
+
+  /** insert the new tab right after this one instead of the focused tab */
+  insertAfter?: string;
+}
+
+export interface OpenContextMenuBase {
+  /** which window to open the context menu for */
+  wind: string;
+
+  /** left coordinate, in pixels */
+  clientX: number;
+
+  /** top coordinate, in pixels */
+  clientY: number;
+}
+
+interface EvolveBasePayload {
+  /** which window the tab belongs to */
+  wind: string;
+
+  /** the tab to evolve */
+  tab: string;
+
+  /** the new URL */
+  url: string;
+
+  /** the new resource if any */
+  resource?: string;
+
+  /** the new label if any */
+  label?: LocalizedString;
+}
+
+export interface EvolveTabPayload extends EvolveBasePayload {
+  /** if false, that's a new history entry, if true it replaces the current one */
+  replace: boolean;
+
+  /** if true, will only set resource if the url is what we think it is */
+  onlyIfMatchingURL?: boolean;
+
+  fromWebContents?: boolean;
+}
+
+export interface TabInstances {
+  [key: string]: TabInstance;
+}
+
+export interface TabPage {
+  /**
+   * url of tab, something like:
+   *   - itch://collections/:id
+   *   - itch://games/:id
+   *   - itch://preferences
+   *   - https://google.com/
+   *   - https://leafo.itch.io/x-moon
+   */
+  url: string;
+
+  /**
+   * resource associated with tab, something like
+   *    - `games/:id`
+   */
+  resource?: string;
+
+  /**
+   * label/title for this page
+   */
+  label?: LocalizedString;
+
+  /**
+   * favicon for this page
+   */
+  favicon?: string;
+
+  /**
+   * current scroll value
+   */
+  scrollTop?: number;
+
+  /**
+   * restored scroll value. This only changes when navigating backward/forward
+   * through the history, and can be safely used by components to implement scroll
+   * history.
+   */
+  restoredScrollTop?: number;
+}
+
+export interface TabInstance {
+  /** pages visited in this tab */
+  history: TabPage[];
+
+  /** current index of history shown */
+  currentIndex: number;
+
+  /** whether the tab is currently loading */
+  loading?: boolean;
+
+  /** if sleepy, don't load until it's focused */
+  sleepy?: boolean;
+
+  /** label we had when saving the tab */
+  savedLabel?: LocalizedString;
+
+  /** number that increments when we reload a tab */
+  sequence: number;
+
+  /** derived properties related to the current URL */
+  location?: TabInstanceLocation;
+
+  /** derived properties related to the current resource */
+  resource?: TabInstanceResource;
+
+  /** derived properties related to history, etc. */
+  status?: TabInstanceStatus;
+}
+
+export interface TabInstanceLocation {
+  /** current URL of the tab */
+  url: string;
+
+  /** "https:", "itch:", etc. */
+  protocol: string;
+
+  /** "new-tab", "applog", etc. - only set for itch: URLs */
+  internalPage?: string;
+
+  /** in "itch://games/3", "3" as string */
+  firstPathElement?: string;
+
+  /** in "itch://caves/:caveId/launch", "launch" as string */
+  secondPathElement?: string;
+
+  /** in "itch://games/3", 3 as number */
+  firstPathNumber: number;
+
+  /** in "itch://games/3", "games" */
+  hostname: string;
+
+  /** in "itch://games/3", "/3" */
+  pathname: string;
+
+  /** for "https://example.com?a=b&c=d", {"a":"b", "c":"d"} */
+  query: QueryParams;
+
+  /** should the the tab shown in a browser view? */
+  isBrowser: boolean;
+}
+
+export interface QueryParams {
+  [key: string]: string;
+}
+
+export interface TabInstanceResource {
+  /** for resource "games/3", "games" */
+  prefix?: string;
+
+  /** for resource "games/3", "3" */
+  suffix?: string;
+
+  /** for resource "games/3", "" */
+  numericId?: number;
+
+  /** the entire resource */
+  value?: string;
+}
+
+export interface TabInstanceStatus {
+  /** true if we can navigate back */
+  canGoBack: boolean;
+  /** true if we can navigate forward */
+  canGoForward: boolean;
+  /** current icon of the tab */
+  icon?: string;
+  /** current label, maybe empty if we've just navigated */
+  label?: LocalizedString;
+  /** if we're loading a new page, this has the previous page's label */
+  lazyLabel?: LocalizedString;
+}
+
+export interface TabDataSave {
+  /** id of the tab */
+  id: string;
+
+  /** pages visited in this tab */
+  history: TabPage[];
+
+  /** current index of history shown */
+  currentIndex: number;
+
+  /** label the tab had when saved, restored into TabInstance.savedLabel */
+  savedLabel?: LocalizedString;
+}
+
+export type TaskName = "install-queue" | "install" | "uninstall" | "launch";
+
+// not extending Window: main's tsconfig has no dom lib, and every use
+// site casts through unknown and only reads windSpec
+export interface ExtendedWindow {
+  windSpec: WindSpec;
+}
+
+export interface WindSpec {
+  wind: string;
+  role: WindRole;
+}
+
+export type WindRole = "main" | "secondary";
+
+export type Subtract<T, K> = Omit<T, keyof K>;

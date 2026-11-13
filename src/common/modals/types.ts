@@ -1,0 +1,235 @@
+import {
+  Game,
+  PrereqStatus,
+  Cave,
+  Upload,
+  Build,
+  Collection,
+  Action,
+  LaunchTarget,
+} from "common/butlerd/messages";
+import {
+  SteamDirectTarget,
+  SteamShortcutMode,
+  SteamShortcutsSnapshot,
+} from "common/types/steam";
+
+export interface PushBuildParams {
+  /**
+   * Pre-fill the project picker. Pass the full Game so the modal can
+   * derive the wharf target and show cover art without waiting for the
+   * profile-games fetch.
+   */
+  prefilledGame?: Game;
+  /** Pre-fill the channel picker with this channel name. */
+  prefilledChannel?: string;
+}
+
+export interface PushBuildResponse {}
+
+//---------------------
+
+export interface TwoFactorInputParams {
+  username: string;
+}
+
+export interface TwoFactorInputResponse {
+  /** two-factor authentication code entered */
+  totpCode?: string;
+}
+
+//---------------------
+
+export interface ShowErrorParams {
+  rawError: any;
+  game?: Game;
+  log: string;
+  forceDetails?: boolean;
+  showSendReport?: boolean;
+}
+
+export interface ShowErrorResponse {
+  sendReport: boolean;
+}
+
+//---------------------
+
+export interface SecretSettingsParams {}
+export interface SecretSettingsResponse {}
+
+//---------------------
+
+export interface SteamShortcutsParams {
+  snapshot: SteamShortcutsSnapshot;
+  /** games with at least one cave; unioned with snapshot entries */
+  installedGames: Game[];
+  /** pre-stage this game's checkbox when opened from its context menu */
+  initialGameId?: number;
+  /** mode to pre-stage for initialGameId, once its direct target is known */
+  initialMode?: SteamShortcutMode;
+  /** a save is currently being applied in the main process */
+  saving: boolean;
+  /** the snapshot is being reloaded for another account */
+  loading: boolean;
+  /** completed/total games whose shortcut data and artwork are being ensured */
+  saveProgress: { completed: number; total: number } | null;
+  /**
+   * Per installed game, the command a "direct" mode shortcut would use,
+   * or null when the game has none (browser games, missing native build).
+   * null overall while resolution is still in flight.
+   */
+  directTargets: { [gameId: number]: SteamDirectTarget | null } | null;
+}
+
+export interface SteamShortcutsResponse {}
+
+//---------------------
+
+export interface SendFeedbackParams {
+  log?: string;
+}
+
+export interface SendFeedbackResponse {}
+
+//---------------------
+
+export interface PrereqsStateParams {
+  gameTitle: string;
+  tasks: {
+    [prereqName: string]: TaskProgressState;
+  };
+}
+
+interface TaskProgressState {
+  order: number;
+  fullName: string;
+  status: PrereqStatus;
+  progress: number;
+  eta: number;
+  bps: number;
+}
+
+export interface PrereqsStateResponse {}
+
+//---------------------
+
+export interface ManageGameParams {
+  game: Game;
+  caves: Cave[];
+}
+
+export interface ManageGameResponse {}
+
+//---------------------
+
+export interface ManageCaveParams {
+  cave: Cave;
+
+  /** true when opened from the game's manage dialog - shows a back button */
+  fromManageGame?: boolean;
+}
+
+export interface ManageCaveResponse {}
+
+export interface PickManifestActionParams {
+  /** launch targets butler found, shown in this order */
+  actions: Action[];
+  /** the full target for each action, where one could be matched up */
+  targets: (LaunchTarget | null)[];
+  game: Game;
+}
+
+export interface PickManifestActionResponse {
+  /** index of the manifest action that was picked when launching a game */
+  index: number;
+  /** save the pick as the cave's launch target so we stop asking */
+  remember?: boolean;
+}
+
+//---------------------
+
+export interface PlanInstallParams {
+  uploadId?: number;
+  game: Game;
+}
+
+export interface PlanInstallResponse {}
+
+//---------------------
+
+export interface AdoptInstallParams {
+  uploadId?: number;
+  game: Game;
+}
+
+export interface AdoptInstallResponse {}
+
+//---------------------
+
+export interface ExploreJsonParams {
+  data: any;
+}
+
+export interface ExploreJsonResponse {}
+
+//---------------------
+
+export interface SwitchVersionCaveParams {
+  cave: Cave;
+  upload: Upload;
+  builds: Build[];
+}
+
+export interface SwitchVersionCaveResponse {
+  /** index of build to revert to (or negative to abort) */
+  index?: number;
+}
+
+//---------------------
+
+export interface ClearBrowsingDataParams {}
+export interface ClearBrowsingDataResponse {
+  /** whether to clear cookies */
+  cookies?: boolean;
+
+  /** whether to clear cache */
+  cache?: boolean;
+}
+
+//---------------------
+
+export interface ConfirmQuitParams {
+  gameIds: number[];
+}
+export interface ConfirmQuitResponse {}
+
+//---------------------
+
+export interface ViewChangelogParams {}
+export interface ViewChangelogResponse {}
+
+export interface GameCollectionsParams {
+  /** the game whose collection membership is being edited */
+  game: Game;
+}
+export interface GameCollectionsResponse {}
+
+export interface EditCollectionParams {
+  /** the collection to edit; omitted when creating a new one */
+  collection?: Collection;
+  /** tab showing the collection, sent back to the list if it gets deleted */
+  tab?: string;
+}
+export interface EditCollectionResponse {}
+
+export interface ConfirmDeleteCollectionParams {
+  collection: Collection;
+  /** tab showing the collection, sent back to the list once deleted */
+  tab?: string;
+}
+export interface ConfirmDeleteCollectionResponse {}
+
+export interface OrderCollectionGamesParams {
+  collection: Collection;
+}
+export interface OrderCollectionGamesResponse {}

@@ -1,0 +1,617 @@
+import classNames from "classnames";
+import { actions } from "common/actions";
+import * as colors from "common/constants/colors";
+import { specToButton } from "common/helpers/spec-to-button";
+import modals from "renderer/modals";
+import {
+  Action,
+  Dispatch,
+  Modal,
+  ModalButton,
+  ModalButtonSpec,
+} from "common/types";
+import { ambientWind, ambientWindState } from "common/util/navigation";
+import React from "react";
+import HintTooltip from "renderer/App/HintTooltip";
+import Button from "renderer/basics/Button";
+import { HoverCover } from "renderer/basics/Cover";
+import Filler from "renderer/basics/Filler";
+import Icon from "renderer/basics/Icon";
+import IconButton from "renderer/basics/IconButton";
+import RowButton, {
+  BigButtonContent,
+  BigButtonRow,
+  Tag,
+} from "renderer/basics/RowButton";
+import TimeAgo from "renderer/basics/TimeAgo";
+import { hook } from "renderer/hocs/hook";
+import { Watcher } from "common/util/watcher";
+import { watchStore } from "renderer/hooks/useWatcher";
+import store from "renderer/store";
+import { modalWidgets } from "renderer/modal-widgets";
+import styled, * as styles from "renderer/styles";
+import { T } from "renderer/t";
+import { isSecretClick } from "common/helpers/secret-click";
+
+type Flavor = "normal" | "big";
+
+const ModalDialog = styled.dialog.withConfig({
+  displayName: "AppModals-Dialog",
+})`
+  /* Reset default dialog styles */
+  border: none;
+  padding: 0;
+  background: transparent;
+  max-width: none;
+  max-height: none;
+  color: inherit;
+
+  user-select: none;
+
+  /* allow the box shadow to appear */
+  overflow: visible;
+
+  /* Backdrop styling */
+  &::backdrop {
+    background-color: rgba(7, 4, 4, 0.74);
+    animation: ${styles.animations.fadeIn} 0.2s;
+  }
+
+  /* Dialog animation */
+  &[open] {
+    animation: ${styles.animations.fadeIn} 0.2s;
+  }
+
+  .content {
+    min-width: 600px;
+    max-width: 90vw;
+    max-height: 90vh;
+    overflow-y: auto;
+
+    &.fullscreen {
+      border-radius: 0;
+      min-width: 100vw;
+      max-width: 100vw;
+      min-height: 100vh;
+      max-height: 100vh;
+      position: relative;
+
+      .modal-div {
+        position: absolute;
+        top: 0;
+        bottom: 0;
+        left: 0;
+        right: 0;
+      }
+    }
+
+    padding: 0px;
+    border: 1px solid ${(props) => props.theme.windowBorder};
+    ${styles.squircle("18px")};
+    background-color: ${colors.codGray};
+    box-shadow: 0 0 32px black;
+  }
+`;
+
+const ModalsDiv = styled.div.withConfig({
+  displayName: "AppModals-Container",
+})`
+  min-width: 200px;
+  min-height: 200px;
+
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  overflow-y: auto;
+
+  .big-wrapper {
+    display: flex;
+    flex-direction: row;
+
+    .cover-container,
+    .cover {
+      width: 120px;
+      margin-bottom: 20px;
+    }
+
+    .cover-container {
+      flex: 1 0;
+      align-self: flex-start;
+      margin-left: 20px;
+      margin-top: 20px;
+    }
+
+    .buttons {
+      flex-grow: 1;
+    }
+  }
+
+  .body {
+    margin-top: 20px;
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    justify-content: stretch;
+    line-height: 1.6;
+
+    ul {
+      list-style-type: disc;
+      margin-bottom: 1.5em;
+
+      li {
+        margin-left: 1.5em;
+      }
+    }
+
+    .message {
+      padding: 0 20px;
+      overflow-y: auto;
+      max-height: 460px;
+      user-select: text;
+      /* locale strings use \n\n for paragraph breaks */
+      white-space: pre-line;
+
+      code {
+        font-family: monospace;
+      }
+
+      .secondary {
+        color: ${(props) => props.theme.secondaryText};
+      }
+
+      strong {
+        font-weight: bold;
+      }
+    }
+
+    p {
+      line-height: 1.4;
+      margin: 8px 0;
+    }
+
+    .icon {
+      margin-top: 8px;
+      margin-right: 12px;
+      font-size: 48px;
+    }
+  }
+
+  .buttons {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    padding: 20px;
+    padding-bottom: 0;
+
+    &.flavor-big {
+      flex-direction: column;
+      align-items: stretch;
+      padding: 8px 20px;
+      max-height: 300px;
+      overflow-y: auto;
+
+      .button {
+        transition: -webkit-filter 0.2s;
+        font-weight: bold;
+        text-shadow: 0 0 2px rgba(0, 0, 0, 0.58);
+
+        &:not(.action-play) {
+          filter: grayscale(100%) brightness(70%);
+        }
+
+        &:hover {
+          filter: brightness(110%);
+        }
+
+        &,
+        &.secondary {
+          display: flex;
+          align-items: center;
+          margin: 8px 0;
+          font-size: 16px;
+          padding: 14px 14px;
+        }
+
+        .tag {
+          margin: 0 0 0 7px;
+          font-size: 80%;
+          padding: 5px 4px;
+          border-radius: 4px;
+          background: #fffff0;
+          color: $button-background-color;
+          text-shadow: none;
+        }
+
+        .icon {
+          margin-right: 10px;
+        }
+      }
+    }
+  }
+`;
+
+const HeaderDiv = styled.div`
+  background: ${(props) => props.theme.sidebarBackground};
+  padding: 8px;
+  padding-left: 20px;
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+
+  min-height: 2.6em;
+
+  .title {
+    color: ${(props) => props.theme.secondaryText};
+    font-size: ${(props) => props.theme.fontSizes.large};
+  }
+`;
+
+const ButtonsDiv = styled.div`
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  padding: 20px;
+  gap: 8px;
+`;
+
+const BigButtonsDiv = styled.div`
+  display: flex;
+  flex-direction: column;
+  padding: 20px;
+  width: 100%;
+  justify-content: stretch;
+  gap: 12px;
+`;
+
+class Modals extends React.PureComponent<Props, State> {
+  dialogRef = React.createRef<HTMLDialogElement>();
+  private unwatch = () => {};
+
+  constructor(props: Modals["props"], context: any) {
+    super(props, context);
+    this.state = {
+      widgetPayload: null,
+    };
+  }
+
+  override componentDidMount() {
+    this.unwatch = watchStore(store, (watcher) => this.subscribe(watcher));
+    this.syncDialogState();
+    this.dialogRef.current?.addEventListener("cancel", this.onDialogCancel);
+    this.dialogRef.current?.addEventListener("close", this.onDialogClose);
+  }
+
+  override componentWillUnmount() {
+    this.unwatch();
+    this.dialogRef.current?.removeEventListener("cancel", this.onDialogCancel);
+    this.dialogRef.current?.removeEventListener("close", this.onDialogClose);
+  }
+
+  override componentDidUpdate() {
+    this.syncDialogState();
+  }
+
+  syncDialogState() {
+    const { modal } = this.props;
+    const dialog = this.dialogRef.current;
+    if (!dialog) return;
+
+    if (modal && !dialog.open) {
+      dialog.showModal();
+    } else if (!modal && dialog.open) {
+      dialog.close();
+    }
+  }
+
+  subscribe(watcher: Watcher) {
+    watcher.on(actions.commandOk, async () => {
+      const { modal } = this.props;
+      if (!modal) {
+        return;
+      }
+
+      if (modal.bigButtons && modal.bigButtons.length > 0) {
+        // 'ok' does nothing when there's big buttons
+        return;
+      }
+
+      if (modal.buttons && modal.buttons.length > 0) {
+        let primaryButtons = modal.buttons.map(specToButton);
+        primaryButtons = primaryButtons.filter(
+          (b) => !b.className || !/secondary/.test(b.className)
+        );
+        // if there's more than one primary button, or none at all, 'ok' does nothing
+        if (primaryButtons.length === 1) {
+          const onClick = this.buttonOnClick(primaryButtons[0]);
+          onClick();
+        }
+      }
+    });
+  }
+
+  onDialogCancel = (e: Event) => {
+    const { modal } = this.props;
+    if (modal?.unclosable) {
+      e.preventDefault();
+    }
+  };
+
+  onDialogClose = () => {
+    // the close event is fired from a queued task, so by the time it runs a
+    // new modal may already have re-opened the dialog (closeModal with a
+    // follow-up action that opens another modal) - that close is stale and
+    // must not close the new modal
+    if (this.dialogRef.current?.open) {
+      return;
+    }
+    const { modal, dispatch } = this.props;
+    if (modal) {
+      dispatch(actions.closeModal({ wind: ambientWind(), id: modal.id }));
+    }
+  };
+
+  override render() {
+    const { modal } = this.props;
+
+    return (
+      <ModalDialog ref={this.dialogRef}>
+        {modal && (
+          <div
+            className={classNames("content", { fullscreen: modal.fullscreen })}
+          >
+            {this.renderContent()}
+          </div>
+        )}
+        {/* the dialog is in the browser's top layer, where Layout's
+            tooltip instance can't paint */}
+        {modal && <HintTooltip />}
+      </ModalDialog>
+    );
+  }
+
+  renderContent() {
+    const { modal, dispatch } = this.props;
+
+    if (!modal) {
+      return null;
+    }
+
+    const {
+      bigButtons = [],
+      buttons = [],
+      title = "",
+      message = "",
+      detail,
+      widget,
+    } = modal;
+    return (
+      <ModalsDiv className="modal-div">
+        <HeaderDiv>
+          <span className="title" onClick={this.onDebugClick}>
+            {T(title)}
+          </span>
+          <Filler />
+          {modal.unclosable ? null : (
+            <IconButton icon="cross" onClick={this.onCloseModal} />
+          )}
+        </HeaderDiv>
+
+        {message !== "" ? (
+          <div className="body">
+            <div className="message">
+              <div>{T(message)}</div>
+              {detail && <div className="secondary">{T(detail)}</div>}
+            </div>
+          </div>
+        ) : null}
+
+        {bigButtons.length > 0 ? (
+          <div className="big-wrapper">
+            {this.renderCover(modal)}
+            {this.renderButtons(bigButtons, "big")}
+          </div>
+        ) : null}
+
+        {widget ? this.renderWidget(widget, modal) : null}
+
+        {this.renderButtons(buttons, "normal")}
+      </ModalsDiv>
+    );
+  }
+
+  onCloseModal = () => {
+    const { dispatch } = this.props;
+    dispatch(
+      actions.closeModal({
+        wind: ambientWind(),
+      })
+    );
+  };
+
+  onDebugClick = (e: React.MouseEvent<any>) => {
+    if (isSecretClick(e)) {
+      const { dispatch } = this.props;
+      dispatch(
+        actions.openModal(
+          modals.exploreJson.make({
+            wind: "root",
+            title: "Modal payload",
+            message: "",
+            widgetParams: {
+              data: this.props.modal,
+            },
+            fullscreen: true,
+          })
+        )
+      );
+      return;
+    }
+  };
+
+  renderCover(modal: Modal): JSX.Element | null {
+    const { coverUrl, stillCoverUrl } = modal;
+
+    if (!(stillCoverUrl || coverUrl)) {
+      return null;
+    }
+
+    return (
+      <div className="cover-container">
+        <HoverCover
+          gameId={0}
+          className="cover"
+          coverUrl={coverUrl}
+          stillCoverUrl={stillCoverUrl}
+        />
+      </div>
+    );
+  }
+
+  renderButtons(buttons: ModalButtonSpec[], flavor: Flavor) {
+    if (buttons.length === 0) {
+      return null;
+    }
+
+    switch (flavor) {
+      case "big":
+        return this.renderBigButtons(buttons);
+      case "normal":
+        return this.renderNormalButtons(buttons);
+      default:
+        return <div>?</div>;
+    }
+  }
+
+  renderBigButtons(buttons: ModalButtonSpec[]) {
+    return (
+      <BigButtonsDiv>
+        {buttons.map((buttonSpec, index) => {
+          const button = specToButton(buttonSpec);
+          const { label, className = "", icon, id, tags, timeAgo } = button;
+          let onClick = this.buttonOnClick(button);
+
+          return (
+            <RowButton
+              id={id}
+              className={className}
+              key={index}
+              icon={icon}
+              onClick={onClick}
+            >
+              <BigButtonContent>
+                <BigButtonRow>{T(label)}</BigButtonRow>
+
+                {tags || timeAgo ? (
+                  <BigButtonRow>
+                    {tags
+                      ? tags.map((tag, i) => {
+                          return (
+                            <Tag key={i}>
+                              {tag.icon ? <Icon icon={tag.icon} /> : null}
+                              {tag.label ? T(tag.label) : null}
+                            </Tag>
+                          );
+                        })
+                      : null}
+                    {timeAgo ? (
+                      <Tag>
+                        <TimeAgo date={timeAgo.date} />
+                      </Tag>
+                    ) : null}
+                  </BigButtonRow>
+                ) : null}
+              </BigButtonContent>
+            </RowButton>
+          );
+        })}
+      </BigButtonsDiv>
+    );
+  }
+
+  renderNormalButtons(buttons: ModalButtonSpec[]) {
+    let leftButtons: JSX.Element[] = [];
+    let rightButtons: JSX.Element[] = [];
+
+    let index = 0;
+    for (const buttonSpec of buttons) {
+      const button = specToButton(buttonSpec);
+      const { label, className = "", icon, id } = button;
+      let onClick = this.buttonOnClick(button);
+
+      let list = button.left ? leftButtons : rightButtons;
+      list.push(
+        <Button
+          id={id}
+          primary={className !== "secondary"}
+          key={index}
+          onClick={onClick}
+          icon={icon}
+          label={T(label)}
+        />
+      );
+      index++;
+    }
+
+    return (
+      <ButtonsDiv>
+        {leftButtons}
+        <Filler />
+        {rightButtons}
+      </ButtonsDiv>
+    );
+  }
+
+  buttonOnClick(button: ModalButton): () => void {
+    const { dispatch } = this.props;
+    const { action } = button;
+
+    let onClick: () => void;
+    if (action === "widgetResponse") {
+      onClick = () => {
+        const action = actions.modalResponse(this.state.widgetPayload);
+        dispatch(actions.closeModal({ wind: ambientWind(), action }));
+      };
+    } else {
+      onClick = () =>
+        dispatch(
+          actions.closeModal({
+            wind: ambientWind(),
+            action: action as Action<any>,
+          })
+        );
+    }
+    return onClick;
+  }
+
+  renderWidget(widget: string, modal: Modal): JSX.Element | null {
+    const Component = modalWidgets[widget];
+    if (!Component) {
+      return null;
+    }
+    return <Component modal={modal} updatePayload={this.updatePayload} />;
+  }
+
+  updatePayload = (payload: typeof actions.modalResponse.payload) => {
+    this.setState({ widgetPayload: payload });
+  };
+}
+
+interface Props {
+  modal: Modal | undefined;
+  dispatch: Dispatch;
+}
+
+interface State {
+  widgetPayload?: typeof actions.modalResponse.payload;
+}
+
+export default hook((map) => ({
+  modal: map((rs) => {
+    const s = ambientWindState(rs);
+    if (s) {
+      return s.modals[0];
+    } else {
+      return undefined;
+    }
+  }),
+}))(Modals);

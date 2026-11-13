@@ -1,0 +1,54 @@
+import { IntlMessageFormat } from "intl-messageformat";
+import { FormattedMessage, IntlShape } from "react-intl";
+import { LocalizedString } from "common/types";
+import { memoize } from "common/util/lru-memoize";
+import { collapseIntlChunks, stripRichTags } from "common/format/t";
+
+export function T(input: any): JSX.Element | string {
+  if (Array.isArray(input)) {
+    const id = input[0];
+    const valuesIn = input[1] || {};
+    const { defaultValue = null, ...values } = valuesIn;
+    return (
+      <FormattedMessage id={id} values={values} defaultMessage={defaultValue} />
+    );
+  } else {
+    return input;
+  }
+}
+
+export function TString(intl: IntlShape, input: any): string {
+  if (Array.isArray(input)) {
+    const id = input[0];
+    const valuesIn = input[1] || {};
+    const { defaultValue = "", ...values } = valuesIn;
+    if (intl.messages[id]) {
+      return intl.formatMessage({ id }, { ...stripRichTags, ...values });
+    } else {
+      try {
+        const formatter = new IntlMessageFormat(defaultValue, intl.locale);
+        return collapseIntlChunks(
+          formatter.format<string>({ ...stripRichTags, ...values })
+        );
+      } catch (e) {
+        return defaultValue;
+      }
+    }
+  } else {
+    return input;
+  }
+}
+
+// intersection rather than a single interface: `defaultValue` is pulled
+// out before the rest is passed as format values, so it may be absent
+// without weakening the index signature to `| undefined`
+type I18nVariables = {
+  defaultValue?: string;
+} & {
+  [key: string]: string | number;
+};
+
+export let _ = (key: string, variables?: I18nVariables): LocalizedString => {
+  return [key, variables];
+};
+_ = memoize(10000, _);

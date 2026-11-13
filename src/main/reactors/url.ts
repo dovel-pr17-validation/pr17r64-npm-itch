@@ -1,0 +1,205 @@
+import { actions } from "common/actions";
+import urls from "common/constants/urls";
+import { Store } from "common/types";
+import { SteamShortcutMode } from "common/types/steam";
+import { isItchioURL, openExternalURL } from "main/util/url";
+import { Watcher } from "common/util/watcher";
+import { mainLogger } from "main/logger";
+import modals from "main/modals";
+import urlParser from "url";
+import querystring from "querystring";
+import { doAsync } from "renderer/helpers/doAsync";
+import { queueInstall } from "main/reactors/tasks/queue-game";
+import { mcall } from "main/butlerd/mcall";
+import * as messages from "common/butlerd/messages";
+
+const logger = mainLogger.child(__filename);
+
+export default function (watcher: Watcher) {
+  watcher.on(actions.processUrlArguments, async (store, action) => {
+    const { args } = action.payload;
+    for (const uri of args) {
+      if (isItchioURL(uri)) {
+        store.dispatch(actions.handleItchioURI({ uri }));
+        break;
+      }
+    }
+  });
+
+  watcher.on(actions.openInExternalBrowser, async (store, action) => {
+    const uri = action.payload.url;
+    if (isItchioURL(uri)) {
+      store.dispatch(actions.handleItchioURI({ uri }));
+      return;
+    }
+    openExternalURL(uri);
+  });
+
+  watcher.on(actions.handleItchioURI, async (store, action) => {
+    const { uri } = action.payload;
+
+    const parsed = urlParser.parse(uri, true);
+    // itch://oauth-callback?code=...&state=...
+    if (parsed.hostname === "oauth-callback") {
+      const { code, state, error, error_description } = parsed.query;
+
+      if (error) {
+        logger.error(`OAuth error: ${error} - ${error_description}`);
+        store.dispatch(
+          actions.loginFailed({
+            username: "OAuth",
+            error: new Error(
+              error_description
+                ? String(error_description)
+                : `OAuth error: ${error}`
+            ),
+          })
+        );
+        return;
+      }
+
+      if (code && state) {
+        store.dispatch(
+          actions.handleOAuthCallback({
+            code: String(code),
+            state: String(state),
+          })
+        );
+        return;
+      }
+
+      logger.error(`OAuth callback missing code or state: ${uri}`);
+      return;
+    }
+
+    const { profile } = store.getState().profile;
+    if (profile) {
+      handleItchioUrl(store, uri);
+    } else {
+      logger.info(`Queuing ${uri} for later...`);
+      store.dispatch(actions.pushItchioURI({ uri }));
+    }
+  });
+
+  watcher.on(actions.loginSucceeded, async (store, action) => {
+    const uris = store.getState().profile.itchioUris;
+    store.dispatch(actions.clearItchioURIs({}));
+
+    for (const uri of uris) {
+      handleItchioUrl(store, uri);
+    }
+  });
+
+  watcher.on(actions.viewCreatorProfile, async (store, action) => {
+    const { profile } = store.getState().profile;
+    if (!profile) {
+      return;
+    }
+    const url = profile.user.url;
+    store.dispatch(actions.navigate({ wind: "root", url }));
+  });
+
+  watcher.on(actions.viewCommunityProfile, async (store, action) => {
+    const { profile } = store.getState().profile;
+    if (!profile) {
+      return;
+    }
+    const url = profile.user.url;
+    const host = urlParser.parse(url).hostname;
+    if (!host) {
+      logger.warn(`Could not extract hostname from profile URL (${url})`);
+      return;
+    }
+    const slug = /^[^.]+/.exec(host);
+    store.dispatch(
+      actions.navigate({
+        wind: "root",
+        url: `${urls.itchio}/profile/${slug}`,
+      })
+    );
+  });
+
+  watcher.on(actions.sendFeedback, async (store, action) => {
+    const { log } = action.payload;
+
+    store.dispatch(
+      actions.openModal(
+        modals.sendFeedback.make({
+          wind: "root",
+          title: ["send_feedback.title"],
+          widgetParams: {
+            log,
+          },
+        })
+      )
+    );
+  });
+}
+
+/**
+ * Returns true if it was an action URL
+ */
+export function handleItchioUrl(store: Store, uri: string): boolean {
+  logger.info(`Processing itchio uri (${uri})`);
+  let url = uri.replace(/^[^:]+:/, "itch:");
+  const parsedURL = urlParser.parse(url);
+  if (parsedURL.hostname === "steam-shortcuts") {
+    // only opens the dialog; nothing reaches Steam until the user saves
+    const queryParams = querystring.parse(parsedURL.query || "");
+    const gameId = parseInt(queryParams["game_id"] as string, 10);
+    const rawMode = queryParams["mode"];
+    const mode: SteamShortcutMode | undefined =
+      rawMode === "direct" || rawMode === "itch" ? rawMode : undefined;
+    store.dispatch(
+      actions.openSteamShortcutsDialog(
+        Number.isFinite(gameId) ? { gameId, mode } : {}
+      )
+    );
+    return true;
+  }
+  if (parsedURL.hostname === "game-collections") {
+    // itch://game-collections?game_id=N
+    const queryParams = querystring.parse(parsedURL.query || "");
+    const gameId = parseInt(queryParams["game_id"] as string, 10);
+    if (Number.isFinite(gameId)) {
+      store.dispatch(actions.openGameCollectionsDialog({ gameId }));
+    } else {
+      logger.warn(`Ignoring ${url}: missing game_id`);
+    }
+    return true;
+  }
+  if (parsedURL.hostname === "install") {
+    doAsync(async () => {
+      const queryParams = querystring.parse(parsedURL.query || "");
+      const gameId = parseInt(queryParams["game_id"] as string, 10);
+      let uploadId: number | undefined = parseInt(
+        queryParams["upload_id"] as string,
+        10
+      );
+      if (!Number.isFinite(uploadId)) {
+        uploadId = undefined;
+      }
+      // the param may be valueless (`...&launch`), so check presence
+      const launch = queryParams["launch"] !== undefined;
+      logger.info(`Should queue install because of URL: ${url}`);
+      const { game } = await mcall(messages.FetchGame, { gameId });
+      if (!game) {
+        logger.warn(`Could not fetch game ${gameId}, not queuing install`);
+        return;
+      }
+      if (launch) {
+        // launch the installed cave (behind a confirmation modal), or fall
+        // back to installing when nothing matches
+        store.dispatch(
+          actions.queueGame({ game, uploadId, confirmLaunch: true })
+        );
+        return;
+      }
+      await queueInstall(store, game, uploadId);
+    });
+    return true;
+  }
+
+  store.dispatch(actions.navigate({ wind: "root", url }));
+  return false;
+}

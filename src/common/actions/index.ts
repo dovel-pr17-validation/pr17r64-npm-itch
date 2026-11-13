@@ -1,0 +1,1017 @@
+import { Endpoint } from "@itchio/butlerd";
+import {
+  Cave,
+  Download,
+  DownloadProgress,
+  Game,
+  GameUpdate,
+  GameUpdateChoice,
+  InstallEvent,
+  Profile,
+  InstallLocationSummary,
+  PublishPushComparison,
+  PublishPushTopChangedFiles,
+} from "common/butlerd/messages";
+import { LogEntry } from "common/logger";
+import { TypedModal, TypedModalUpdate } from "common/modals";
+import {
+  Action,
+  CommonsState,
+  Dispatch,
+  EvolveTabPayload,
+  I18nResources,
+  ItchAppTabs,
+  LocaleInfo,
+  LocalizedString,
+  MenuTemplate,
+  ModalAction,
+  NavigatePayload,
+  OpenAtLoginError,
+  OpenContextMenuBase,
+  OpenTabPayload,
+  PackageState,
+  PreferencesState,
+  ProgressInfo,
+  ProxySource,
+  SystemState,
+  SystemTasksState,
+  TabPage,
+  TaskName,
+  WindRole,
+} from "common/types";
+import { SteamShortcutMode } from "common/types/steam";
+
+export interface ActionCreator<PayloadType extends Object> {
+  payload: PayloadType;
+  (payload: PayloadType): Action<PayloadType>;
+}
+
+function action<PayloadType extends Object>(): ActionCreator<PayloadType> {
+  const ret =
+    (type: string) =>
+    (payload: PayloadType): Action<PayloadType> => {
+      return {
+        type,
+        payload,
+      };
+    };
+  // bending typing rules a bit, forgive me
+  return ret as any;
+}
+
+/** Returns the type string an action creator produces, without dispatching. */
+export function typeOf(actionCreator: (payload: any) => Action<any>): string {
+  return actionCreator({}).type;
+}
+
+export function dispatcher<T, U extends Object>(
+  dispatch: Dispatch,
+  actionCreator: (payload: T) => Action<U>
+) {
+  return (payload: T) => {
+    const action = actionCreator(payload);
+    dispatch(action);
+    return action;
+  };
+}
+
+interface MirrorInput {
+  [key: string]: ActionCreator<any>;
+}
+
+type MirrorOutput<T> = { [key in keyof T]: T[key] };
+
+function wireActions<T extends MirrorInput>(input: T): MirrorOutput<T> {
+  const res = {} as any;
+  for (const k of Object.keys(input)) {
+    res[k] = input[k](k);
+  }
+  return res as MirrorOutput<T>;
+}
+
+export const actions = wireActions({
+  // system
+
+  preboot: action<{}>(),
+  prebootDone: action<{}>(),
+  rootWindowReady: action<{}>(),
+  boot: action<{}>(),
+  tick: action<{}>(),
+  log: action<{
+    entry: LogEntry;
+  }>(),
+  scheduleSystemTask: action<Partial<SystemTasksState>>(),
+  systemAssessed: action<{
+    system: SystemState;
+  }>(),
+  languageChanged: action<{
+    lang: string;
+  }>(),
+  processUrlArguments: action<{
+    /** these are command-line arguments */
+    args: string[];
+  }>(),
+  useSavedLoginById: action<{
+    profileId: number;
+  }>(),
+  handleItchioURI: action<{
+    /** example: itchio:///games/3 */
+    uri: string;
+  }>(),
+  pushItchioURI: action<{
+    uri: string;
+  }>(),
+  clearItchioURIs: action<{}>(),
+
+  proxySettingsDetected: action<{
+    /** a valid HTTP(S) proxy string (that could be in $HTTP_PROXY) */
+    proxy: string;
+    source: ProxySource;
+  }>(),
+  commonsUpdated: action<Partial<CommonsState>>(),
+
+  // modals
+
+  openModal: action<TypedModal<any, any>>(),
+  updateModalWidgetParams: action<TypedModalUpdate<any>>(),
+  setModalUnclosable: action<{
+    wind: string;
+
+    /** id of the modal to update */
+    id: string;
+
+    /** when true, hides the header close button and ignores Escape */
+    unclosable: boolean;
+  }>(),
+  closeModal: action<{
+    wind: string;
+
+    /** id of the modal to close - if unspecified, close frontmost */
+    id?: string;
+
+    /** action that should be dispatched once the modal's been closed */
+    action?: ModalAction;
+  }>(),
+  modalClosed: action<{
+    wind: string;
+
+    /** id of the modal that was just closed, undefined when closing
+     * the frontmost modal of a wind that had none */
+    id: string | undefined;
+
+    /** if there was a response, it's here */
+    response: any;
+  }>(),
+  modalResponse: action<any>(),
+
+  openWind: action<{
+    initialURL: string;
+    role: WindRole;
+  }>(),
+  closeWind: action<{
+    wind: string;
+  }>(),
+  windClosed: action<{
+    wind: string;
+  }>(),
+  windOpened: action<{
+    wind: string;
+    nativeId: number;
+    initialURL: string;
+    role: WindRole;
+  }>(),
+  // setup
+
+  packagesListed: action<{
+    packageNames: string[];
+  }>(),
+  packageGotVersionPrefix: action<{
+    name: string;
+    version: string;
+    versionPrefix: string;
+    channel?: string;
+  }>(),
+  packageStage: action<{
+    name: string;
+    stage: PackageState["stage"];
+  }>(),
+  packageNeedRestart: action<{
+    name: string;
+    availableVersion: string;
+    needsElevation?: boolean;
+  }>(),
+  packageProgress: action<{
+    name: string;
+    progressInfo: ProgressInfo;
+  }>(),
+
+  relaunchRequest: action<{}>(),
+  relaunch: action<{}>(),
+
+  spinningUpButlerd: action<{
+    startedAt: number;
+  }>(),
+  gotButlerdEndpoint: action<{
+    endpoint: Endpoint;
+  }>(),
+
+  setupStatus: action<{
+    icon: string;
+    message: LocalizedString;
+    rawError?: Error;
+    log?: string;
+  }>(),
+  setupOperationProgress: action<{
+    progress: ProgressInfo;
+  }>(),
+  setupDone: action<{}>(),
+  silentlyScanInstallLocations: action<{}>(),
+  locationScanProgress: action<{
+    progress: number;
+  }>(),
+  locationScanDone: action<{}>(),
+  retrySetup: action<{}>(),
+
+  // login
+
+  attemptLogin: action<{}>(),
+  loginWithPassword: action<{
+    /** the username or e-mail for the itch.io account to log in as */
+    username: string;
+
+    /** the password for the itch.io account to log in as */
+    password: string;
+
+    /** the 2FA totp code entered by user */
+    totpCode?: string;
+  }>(),
+  initiateOAuthLogin: action<{}>(),
+  oauthURLGenerated: action<{ url: string }>(),
+  handleOAuthCallback: action<{
+    /** The authorization code extracted from the URL */
+    code: string;
+
+    /** The state parameter returned by the server */
+    state: string;
+  }>(),
+  submitOAuthCode: action<{
+    /** The authorization code manually pasted by the user */
+    code: string;
+  }>(),
+  useSavedLogin: action<{
+    profile: Profile;
+  }>(),
+  loginFailed: action<{
+    /** the username we couldn't log in as (useful to prefill login form for retry) */
+    username: string;
+
+    /** an error that occured while logging in */
+    error: Error;
+  }>(),
+  loginSucceeded: action<{
+    /** Profile we just logged in as */
+    profile: Profile;
+  }>(),
+
+  forgetProfile: action<{
+    /** Profile to forget */
+    profile: Profile;
+  }>(),
+  profilesUpdated: action<{}>(),
+
+  changeUser: action<{}>(),
+  requestLogout: action<{}>(),
+  loggedOut: action<{}>(),
+
+  // window events
+
+  windFocusChanged: action<{
+    wind: string;
+
+    /** current state of focusedness */
+    focused: boolean;
+  }>(),
+  windFullscreenChanged: action<{
+    wind: string;
+
+    /** current state of fullscreenedness */
+    fullscreen: boolean;
+  }>(),
+  windHtmlFullscreenChanged: action<{
+    wind: string;
+
+    /** current state of html-fullscreenedness */
+    htmlFullscreen: boolean;
+  }>(),
+  windMaximizedChanged: action<{
+    wind: string;
+
+    /** current state of fullscreenedness */
+    maximized: boolean;
+  }>(),
+  windBoundsChanged: action<{
+    wind: string;
+
+    bounds: {
+      /** left border, in pixels */
+      x: number;
+      /** top border, in pixels */
+      y: number;
+      /** in pixels */
+      width: number;
+      /** in pixels */
+      height: number;
+    };
+  }>(),
+  focusWind: action<{
+    wind: string;
+
+    /** if set to true, toggle focus instead of always focusing */
+    toggle?: boolean;
+  }>(),
+  hideWind: action<{
+    wind: string;
+  }>(),
+
+  // navigation
+  tabOpened: action<OpenTabPayload>(),
+  newTab: action<{
+    wind: string;
+  }>(),
+  navigate: action<NavigatePayload>(),
+  tabFocused: action<{
+    wind: string;
+
+    /** the id of the new tab */
+    tab: string;
+  }>(),
+  focusNthTab: action<{
+    wind: string;
+
+    /** the index of the constant tab to focus (0-based) */
+    index: number;
+  }>(),
+  moveTab: action<{
+    wind: string;
+
+    /** old tab index */
+    before: number;
+    /** new tab index */
+    after: number;
+  }>(),
+  showNextTab: action<{
+    wind: string;
+  }>(),
+  showPreviousTab: action<{
+    wind: string;
+  }>(),
+
+  closeTab: action<{
+    wind: string;
+
+    /** id of tab to close */
+    tab: string;
+  }>(),
+  closeCurrentTab: action<{
+    wind: string;
+  }>(),
+  closeTabOrAuxWindow: action<{
+    wind: string;
+  }>(),
+  closeAllTabs: action<{
+    wind: string;
+  }>(),
+  closeOtherTabs: action<{
+    wind: string;
+
+    /** the only transient tab that'll be left */
+    tab: string;
+  }>(),
+  closeTabsBelow: action<{
+    wind: string;
+
+    /** the tab after which all tabs will be closed */
+    tab: string;
+  }>(),
+  tabsClosed: action<{
+    wind: string;
+
+    tabs: string[];
+
+    andFocus?: string;
+  }>(),
+
+  evolveTab: action<EvolveTabPayload>(),
+  tabReloaded: action<{
+    wind: string;
+
+    /** the tab that just reloaded */
+    tab: string;
+  }>(),
+  tabsChanged: action<{
+    wind: string;
+  }>(),
+  tabsRestored: action<{
+    wind: string;
+    snapshot: ItchAppTabs;
+  }>(),
+  tabPageUpdate: action<{
+    wind: string;
+
+    /** tab for which we fetched data */
+    tab: string;
+
+    /** the data we fetched */
+    page: Partial<TabPage>;
+  }>(),
+  tabLoadingStateChanged: action<{
+    wind: string;
+
+    tab: string;
+
+    loading: boolean;
+  }>(),
+  analyzePage: action<{
+    wind: string;
+
+    /** Which tab we're analyzing the page for */
+    tab: string;
+
+    /** The url we're supposed to analyze */
+    url: string;
+  }>(),
+  tabGotWebContents: action<{
+    wind: string;
+
+    /** id of tab that just got a webcontents */
+    tab: string;
+
+    webContentsId: number;
+  }>(),
+  tabLosingWebContents: action<{
+    wind: string;
+
+    /** id of tab that just lost a webcontents */
+    tab: string;
+  }>(),
+
+  openTabBackHistory: action<
+    OpenContextMenuBase & {
+      tab: string;
+    }
+  >(),
+
+  openTabForwardHistory: action<
+    OpenContextMenuBase & {
+      tab: string;
+    }
+  >(),
+
+  openGameContextMenu: action<
+    OpenContextMenuBase & {
+      /** game to open the context menu of */
+      game: Game;
+      /**
+       * treat the game as owned even if commons has no download key —
+       * set by views that know about unmaterialized bundle ownership
+       */
+      forceOwned?: boolean;
+      /**
+       * show only the "link existing folder" item instead of the game
+       * controls. Used for when game is being displayed in install dialog.
+       */
+      showAdoptInstall?: boolean;
+      /**
+       * add an "Upload new build" item that opens the push build dialog
+       * with this game preselected. Used by views listing the user's own
+       * games (dashboard).
+       */
+      showUploadBuild?: boolean;
+    }
+  >(),
+  openUserMenu: action<OpenContextMenuBase>(),
+
+  viewCreatorProfile: action<{}>(),
+  viewCommunityProfile: action<{}>(),
+
+  // menu
+
+  menuChanged: action<{
+    /** new menu template */
+    template: MenuTemplate;
+  }>(),
+
+  // context menus
+
+  popupContextMenu: action<
+    OpenContextMenuBase & {
+      /** contents of the context menu */
+      template: MenuTemplate;
+    }
+  >(),
+  checkForComponentUpdates: action<{
+    manual?: boolean;
+  }>(),
+
+  cancelQuit: action<{}>(),
+  quit: action<{}>(),
+  performQuit: action<{}>(),
+  quitWhenMain: action<{}>(),
+
+  // locales
+  localesConfigLoaded: action<{
+    /** languages available in the app */
+    locales: LocaleInfo[];
+  }>(),
+  localeLoaded: action<{
+    /** which language's strings were just loaded */
+    lang: string;
+
+    /** i18n strings */
+    resources: I18nResources;
+  }>(),
+  reloadLocales: action<{}>(),
+
+  // install locations
+
+  browseInstallLocation: action<{
+    /** id of install location to browse */
+    id: string;
+  }>(),
+  addInstallLocation: action<{
+    wind: string;
+  }>(),
+  removeInstallLocation: action<{
+    /** id of the install location to remove */
+    id: string;
+  }>(),
+  scanInstallLocations: action<{}>(),
+  newItemsImported: action<{}>(),
+  installLocationsChanged: action<{}>(),
+
+  ownedKeysFetched: action<{}>(),
+
+  bundleOwnershipsSynced: action<{}>(),
+
+  // tasks
+
+  taskStarted: action<{
+    /** name of task that just started */
+    name: TaskName;
+
+    /** identifier of the task that just started */
+    id: string;
+
+    /** timestamp for the task's start */
+    startedAt: number;
+
+    /** identifier of the game the task is tied to */
+    gameId: number;
+
+    /** identifier of the cave the task is tied to, if any */
+    caveId: string | null;
+  }>(),
+  taskProgress: action<
+    ProgressInfo & {
+      /** the task this progress info is for */
+      id: string;
+    }
+  >(),
+  taskEnded: action<{
+    /** the task that just ended */
+    id: string;
+
+    /** an error, if any */
+    err: string | null;
+  }>(),
+  abortTask: action<{
+    /** id of the task to abort */
+    id: string;
+  }>(),
+
+  // downloads
+
+  downloadQueued: action<{}>(),
+  downloadsListed: action<{
+    downloads: Download[];
+  }>(),
+  refreshDownloads: action<{}>(),
+  downloadProgress: action<{
+    download: Download;
+    progress: DownloadProgress;
+    speedHistory: number[];
+  }>(),
+  downloadEnded: action<{
+    download: Download;
+    /** absent when driven by a butler that predates them */
+    events?: InstallEvent[];
+  }>(),
+  clearFinishedDownloads: action<{}>(),
+  prioritizeDownload: action<{
+    /** the download for which we want to show an error dialog */
+    id: string;
+  }>(),
+  showDownloadError: action<{
+    /** the download for which we want to show an error dialog */
+    id: string;
+  }>(),
+  discardDownload: action<{
+    /** id of download to discard */
+    id: string;
+  }>(),
+  setDownloadsPaused: action<{
+    paused: boolean;
+  }>(),
+  retryDownload: action<{
+    /** id of download to retry */
+    id: string;
+  }>(),
+
+  // game management
+
+  queueGame: action<{
+    /** the game we want to download */
+    game: Game;
+
+    /** which cave to launch */
+    caveId?: string;
+
+    /** only consider caves for this upload, and install it if none */
+    uploadId?: number;
+
+    /** ask for confirmation before launching an installed cave */
+    confirmLaunch?: boolean;
+  }>(),
+  queueGameInstall: action<{
+    /** the game we want to install */
+    game: Game;
+
+    /** the upload we picked */
+    uploadId?: number;
+  }>(),
+  queueLaunch: action<{ cave: Cave }>(),
+  launchEnded: action<{}>(),
+  manageGame: action<{
+    /** which game to manage */
+    game: Game;
+  }>(),
+  adoptGameInstall: action<{
+    /** the game to link an existing folder to */
+    game: Game;
+
+    /** upload preselected in the adopt dialog */
+    uploadId?: number;
+  }>(),
+  manageCave: action<{
+    /** which cave to manage */
+    caveId: string;
+
+    /** true when opened from the game's manage dialog - shows a back button */
+    fromManageGame?: boolean;
+  }>(),
+  requestCaveUninstall: action<{
+    /** id of the cave to uninstall */
+    caveId: string;
+  }>(),
+  queueCaveUninstall: action<{
+    /** id of the cave to uninstall */
+    caveId: string;
+  }>(),
+  queueCaveReinstall: action<{
+    /** id of the cave to reinstall */
+    caveId: string;
+  }>(),
+  uninstallEnded: action<{}>(),
+  exploreCave: action<{
+    /** id of the cave to explore */
+    caveId: string;
+  }>(),
+  openGameCollectionsDialog: action<{
+    /** game whose collection membership to edit */
+    gameId: number;
+  }>(),
+  requestCollectionDelete: action<{
+    /** collection to delete, after confirmation */
+    collectionId: number;
+    /** tab showing the collection, sent back to the collections list once deleted */
+    tab?: string;
+  }>(),
+  deleteCollection: action<{
+    collectionId: number;
+    tab?: string;
+  }>(),
+  /** a collection was created, edited, deleted, or had its games changed */
+  collectionsChanged: action<{}>(),
+  openSteamShortcutsDialog: action<{
+    /** game to pre-stage a shortcut for, if any */
+    gameId?: number;
+    /** mode to pre-stage for that game; applied once its target resolves */
+    mode?: SteamShortcutMode;
+  }>(),
+  steamShortcutsSelectUser: action<{
+    /** Steam account id (userdata folder) to manage shortcuts for */
+    userId: string;
+  }>(),
+  steamShortcutsSave: action<{
+    /** installed games whose shortcuts should be created or refreshed */
+    ensure: { gameId: number; mode: SteamShortcutMode }[];
+    /** existing shortcuts whose launcher-derived fields should be repaired */
+    repairGameIds: number[];
+    /** existing shortcuts that should be removed */
+    removeGameIds: number[];
+  }>(),
+  forceCloseGameRequest: action<{
+    /** the game we want to force-quit */
+    game: Game;
+  }>(),
+  forceCloseGame: action<{
+    /** the id of the game we want to force-quit */
+    gameId: number;
+  }>(),
+  checkForGameUpdates: action<{}>(),
+  checkForGameUpdate: action<{
+    /** which cave to check for an update */
+    caveId: string;
+    suppressNotification: boolean;
+  }>(),
+  gameUpdateCheckStatus: action<{
+    /** whether we're currently checking */
+    checking: boolean;
+
+    /** how far along we are */
+    progress: number;
+  }>(),
+  gameUpdateAvailable: action<{
+    /** the actual update info */
+    update: GameUpdate;
+  }>(),
+  showGameUpdate: action<{
+    /** the actual update info */
+    update: GameUpdate;
+  }>(),
+  queueGameUpdate: action<{
+    /** the actual update info */
+    update: GameUpdate;
+    /** the choice we made */
+    choice: GameUpdateChoice;
+  }>(),
+  queueAllGameUpdates: action<{}>(),
+  snoozeCave: action<{
+    caveId: string;
+  }>(),
+
+  switchVersionCaveRequest: action<{
+    /** the cave to revert to a different build */
+    cave: Cave;
+  }>(),
+  viewCaveDetails: action<{
+    /** the cave to view details of */
+    caveId: string;
+  }>(),
+
+  // purchase
+
+  initiatePurchase: action<{
+    /** the game that might be purchased */
+    game: Game;
+  }>(),
+
+  // search
+
+  focusSearch: action<{}>(),
+  closeSearch: action<{}>(),
+
+  focusLocationBar: action<{
+    wind: string;
+    tab: string;
+  }>(),
+
+  blurLocationBar: action<{}>(),
+
+  searchVisibilityChanged: action<{
+    open: boolean;
+  }>(),
+
+  // preferences
+
+  updatePreferences: action<Partial<PreferencesState>>(),
+  preferencesLoaded: action<PreferencesState>(),
+  clearBrowsingDataRequest: action<{
+    wind: string;
+  }>(),
+  clearBrowsingData: action<{
+    /** Whether to wipe cached images & files */
+    cache: boolean;
+
+    /** Whether to wipe cookies (will log out user) */
+    cookies: boolean;
+  }>(),
+  openAtLoginError: action<{
+    /** null clears any previous error */
+    error: OpenAtLoginError | null;
+  }>(),
+
+  // internal
+
+  setReduxLoggingEnabled: action<{
+    /** true if should show in the chrome console */
+    enabled: boolean;
+  }>(),
+
+  // misc.
+
+  /** cross-platform, notification bubble */
+  notify: action<{
+    /** title of the notification, defaults to `itch` */
+    title?: string;
+
+    /** main text of the notification */
+    body: string;
+
+    /** path to the icon (on fs, can be relative to `app/`), defaults to itch icon */
+    icon?: string;
+
+    /** action to dispatch if notification is clicked */
+    onClick?: Action<any>;
+  }>(),
+  statusMessage: action<{
+    /** the message we want to show in the status bar */
+    message: LocalizedString;
+  }>(),
+  dismissStatusMessage: action<{}>(),
+  commandOk: action<{
+    wind: string;
+  }>(),
+  commandBack: action<{
+    wind: string;
+  }>(),
+  commandGoBack: action<{
+    wind: string;
+  }>(),
+  commandGoForward: action<{
+    wind: string;
+  }>(),
+  commandLocation: action<{
+    wind: string;
+  }>(),
+  commandReload: action<{
+    wind: string;
+  }>(),
+  tabGoBack: action<{
+    wind: string;
+    tab: string;
+  }>(),
+  tabGoForward: action<{
+    wind: string;
+    tab: string;
+  }>(),
+  tabGoToIndex: action<{
+    wind: string;
+    tab: string;
+
+    index: number;
+  }>(),
+  tabWentToIndex: action<{
+    wind: string;
+    tab: string;
+
+    oldIndex: number;
+    index: number;
+    fromWebContents?: boolean;
+  }>(),
+  tabStop: action<{
+    wind: string;
+    tab: string;
+  }>(),
+
+  openInExternalBrowser: action<{
+    /** the URL to open in an external web browser */
+    url: string;
+  }>(),
+  openAppLog: action<{}>(),
+  openLogFileRequest: action<{}>(),
+  openDevTools: action<{
+    wind: string;
+
+    /** if specified, opens devTools for a tab, not the app */
+    tab?: string;
+  }>(),
+  inspect: action<{
+    webContentsId: number;
+
+    x: number;
+    y: number;
+  }>(),
+  sendFeedback: action<{
+    /** error log that should be included in the issue report */
+    log?: string;
+  }>(),
+  viewChangelog: action<{}>(),
+  copyToClipboard: action<{
+    /** text to copy to clipboard */
+    text: string;
+  }>(),
+
+  // upload (push to itch.io via butler)
+
+  startPush: action<{
+    jobId: string;
+    createdAt: number;
+    gameId: number;
+    /** wharf target in user/slug form, e.g. "leafo/x-moon" */
+    target: string;
+    channel: string;
+    /** source path (folder or zip) */
+    src: string;
+    /** Optional user-supplied version string forwarded to butler's
+     *  --userversion. Empty string from the form is normalised to undefined
+     *  before dispatch so butler keeps its auto-incrementing default. */
+    userVersion?: string;
+    /** Mark a newly-created channel as hidden on first push. Only set
+     *  when the typed channel name doesn't already exist for the target. */
+    hidden?: boolean;
+    /** Display fields snapshotted from the picked Game so the synthetic
+     *  in-flight row in the dashboard can render the project name/cover
+     *  before the real Build comes back from the server. */
+    gameTitle?: string;
+    gameCoverUrl?: string;
+    gameStillCoverUrl?: string;
+  }>(),
+  /** Fires once per push, as soon as butler has the server-side build ID
+   *  (after CreateBuild, well before upload completes). Lets the dashboard
+   *  hand off the synthetic row to the real server build row early. */
+  pushBuildAssigned: action<{
+    jobId: string;
+    buildId: number;
+  }>(),
+  pushProgress: action<{
+    jobId: string;
+    progress: number;
+    eta?: number;
+    bps?: number;
+    readBytes?: number;
+    totalBytes?: number;
+    uploadedBytes?: number;
+    patchBytes?: number;
+    label?: string;
+  }>(),
+  pushDone: action<{
+    jobId: string;
+    channel: string;
+    buildId: number;
+  }>(),
+  pushFailed: action<{
+    jobId: string;
+    channel: string;
+    message: string;
+  }>(),
+  cancelPush: action<{
+    jobId: string;
+  }>(),
+  /** Remove a terminal (failed/cancelled) push job from the dashboard's
+   *  synthetic-row list. No-op on jobs that are still pushing/processing. */
+  dismissPushJob: action<{
+    jobId: string;
+  }>(),
+
+  // upload — preview (Publish.PushPreview, no side effects on itch.io)
+
+  startPreview: action<{
+    /** uuid for this preview run */
+    id: string;
+    /** wharf target in user/slug form */
+    target: string;
+    channel: string;
+    /** source path (folder or zip) */
+    src: string;
+  }>(),
+  previewProgress: action<{
+    id: string;
+    progress: number;
+    eta?: number;
+    bps?: number;
+    readBytes?: number;
+    totalBytes?: number;
+  }>(),
+  previewDone: action<{
+    id: string;
+    hasParent: boolean;
+    /** Absent when !hasParent (no previous build to compare against). */
+    parentBuildId?: number;
+    sourceSize: number;
+    comparison: PublishPushComparison;
+    topChangedFiles: PublishPushTopChangedFiles;
+  }>(),
+  previewFailed: action<{
+    id: string;
+    /** "Cancelled" is mapped to status "cancelled" by the reducer; any
+     *  other message becomes status "failed". */
+    message: string;
+  }>(),
+  cancelPreview: action<{
+    id: string;
+  }>(),
+  /** Drop the current preview slot — used by the dialog when the user
+   *  changes a form field or closes the modal. */
+  clearPreview: action<{}>(),
+});
